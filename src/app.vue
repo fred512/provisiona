@@ -136,9 +136,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { copyToClipboard, useQuasar } from 'quasar'
 import { useBills } from './composables/useBills'
-import { isSupabaseConfigured, supabase } from './boot/supabase'
 
 const $q = useQuasar()
+const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
 const storedTheme = window.localStorage.getItem('provisiona:theme')
 const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 const themeMode = ref(storedTheme || systemTheme)

@@ -1,6 +1,5 @@
 import { computed, ref } from 'vue'
 import { LocalStorage } from 'quasar'
-import { supabase, isSupabaseConfigured } from '../boot/supabase'
 import { demoBills } from '../data/demoBills'
 
 const storageKey = 'provisiona:bills:v1'
@@ -11,6 +10,7 @@ const syncMode = ref('local')
 const persist = () => LocalStorage.set(storageKey, bills.value)
 
 export function useBills() {
+  const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
   const sortedBills = computed(() => [...bills.value].sort((a, b) => a.dueDate.localeCompare(b.dueDate)))
   const nubankNeed = computed(() => bills.value
     .filter((bill) => bill.bankAccount === 'Nubank' && bill.status !== 'paid')

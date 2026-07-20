@@ -1,6 +1,6 @@
 # Provisiona MVP
 
-PWA em Quasar/Vue para organizar boletos, fontes, remetentes, provisão de saldo e alertas.
+PWA em Nuxt 4, Vue e Quasar para organizar boletos, fontes, remetentes, provisão de saldo e alertas.
 
 A interface é mobile-first: navegação inferior, cadastro em bottom sheet, safe areas para PWA, tema claro/escuro persistente e expansão progressiva para tablet e desktop.
 
@@ -11,14 +11,14 @@ npm install
 npm run dev
 ```
 
-O app abre em modo demonstração e salva alterações no `localStorage`.
+O app abre em modo demonstração e salva alterações no `localStorage`. Com uma sessão Supabase ativa, passa a sincronizar os compromissos protegidos por RLS.
 
 ## Conectar ao Supabase
 
-1. Crie um projeto no Supabase.
-2. Execute `supabase/migrations/202607190001_create_bills.sql` no SQL Editor.
-3. Copie `.env.example` para `.env` e preencha a URL e a chave publicável.
-4. Autentique o usuário no Supabase Auth. Quando houver sessão, o app passa a carregar e salvar as tabelas protegidas por RLS.
+1. Aplique as migrations em `supabase/migrations/` na ordem do nome.
+2. Copie `.env.example` para `.env` e preencha a URL e a chave publicável.
+3. Em Auth → URL Configuration, inclua `http://localhost:9100/**` durante o desenvolvimento.
+4. Autentique o usuário por link de e-mail. Quando houver sessão, o app passa a carregar e salvar as tabelas protegidas por RLS.
 
 Nunca use uma chave `service_role` no frontend.
 
@@ -28,7 +28,7 @@ Nunca use uma chave `service_role` no frontend.
 npm run build
 ```
 
-O resultado instalável fica em `dist/pwa`.
+O resultado de produção fica em `.output/`; os arquivos públicos e o service worker ficam em `.output/public/`.
 
 ## Escopo do MVP
 
