@@ -26,13 +26,7 @@ export function useAuth() {
   }
 
   async function storeGoogleToken(refreshToken) {
-    const { data: { user: current } } = await supabase.auth.getUser()
-    if (!current) return
-    await supabase.from('user_integrations').upsert({
-      user_id: current.id,
-      google_refresh_token: refreshToken,
-      gmail_connected_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' })
+    await supabase.rpc('store_google_token', { token: refreshToken })
   }
 
   async function signInWithGoogle() {
