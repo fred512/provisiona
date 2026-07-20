@@ -12,6 +12,11 @@ export function useAuth() {
     started = true
     supabase.auth.onAuthStateChange((event, session) => {
       user.value = session?.user || null
+      // O refresh token do Google só vem no retorno do consentimento OAuth.
+      // Capturamos e gravamos para a Edge Function ler os boletos depois.
+      if (session?.provider_refresh_token) {
+        storeGoogleToken(session.provider_refresh_token).catch(() => {})
+      }
       if (session?.user && !sessionHandled) {
         sessionHandled = true
         onSession(session.user)
@@ -20,10 +25,24 @@ export function useAuth() {
     })
   }
 
+  async function storeGoogleToken(refreshToken) {
+    const { data: { user: current } } = await supabase.auth.getUser()
+    if (!current) return
+    await supabase.from('user_integrations').upsert({
+      user_id: current.id,
+      google_refresh_token: refreshToken,
+      gmail_connected_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' })
+  }
+
   async function signInWithGoogle() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        scopes: 'https://www.googleapis.com/auth/gmail.readonly',
+        queryParams: { access_type: 'offline', prompt: 'consent' },
+      },
     })
     if (error) throw error
   }

@@ -1,7 +1,7 @@
 import pluginVue from 'eslint-plugin-vue'
 
 export default [
-  { ignores: ['.nuxt/**', '.output/**', 'dist/**', 'node_modules/**', '.quasar/**', 'src-pwa/**', 'public/**'] },
+  { ignores: ['.nuxt/**', '.output/**', 'dist/**', 'node_modules/**', '.quasar/**', 'src-pwa/**', 'public/**', 'supabase/**'] },
   ...pluginVue.configs['flat/essential'],
   {
     languageOptions: {

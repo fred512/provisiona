@@ -99,8 +99,11 @@
           <template v-else-if="activeView === 'bills'">
             <header class="sub-heading">
               <div><span class="eyebrow mono">CONTAS A PAGAR</span><h1>Todos os compromissos</h1></div>
-              <q-btn v-if="billsTab === 'bills'" unelevated icon="add" label="Nova despesa" @click="openEditor()" />
-              <q-btn v-else unelevated icon="add" label="Novo modelo" @click="openTemplateEditor()" />
+              <div class="heading-actions">
+                <q-btn v-if="billsTab === 'bills'" outline icon="sync" :label="syncing ? 'Buscando…' : 'Buscar boletos'" :loading="syncing" @click="syncBoletos" />
+                <q-btn v-if="billsTab === 'bills'" unelevated icon="add" label="Nova despesa" @click="openEditor()" />
+                <q-btn v-else unelevated icon="add" label="Novo modelo" @click="openTemplateEditor()" />
+              </div>
             </header>
             <q-btn-toggle v-model="billsTab" class="bills-tab-toggle" unelevated toggle-color="dark" :options="[{ label: 'Ocorrências', value: 'bills' }, { label: 'Modelos', value: 'templates' }]" />
             <template v-if="billsTab === 'bills'">
@@ -241,6 +244,32 @@ const editorOpen = ref(false)
 const authOpen = ref(false)
 const authEmail = ref('')
 const authBusy = ref(false)
+const syncing = ref(false)
+
+async function syncBoletos() {
+  if (!user.value) {
+    authOpen.value = true
+    return $q.notify({ color: 'dark', icon: 'login', message: 'Entre com o Google para buscar boletos no Gmail.' })
+  }
+  syncing.value = true
+  try {
+    const { data, error } = await supabase.functions.invoke('sync-boletos')
+    if (error) throw error
+    if (data?.error === 'sem_gmail_conectado') {
+      $q.notify({ type: 'warning', message: 'Reautorize o Google com permissão de leitura do Gmail (saia e entre de novo).' })
+    } else if (data?.error) {
+      $q.notify({ type: 'negative', message: `Sincronização: ${data.error}` })
+    } else {
+      const n = data?.updated || 0
+      $q.notify({ color: 'dark', textColor: 'white', icon: 'download_done', message: n ? `${n} boleto${n > 1 ? 's' : ''} carregado${n > 1 ? 's' : ''} do Gmail.` : 'Nenhum boleto novo encontrado.' })
+      if (n) await load()
+    }
+  } catch (e) {
+    $q.notify({ type: 'negative', message: e.message })
+  } finally {
+    syncing.value = false
+  }
+}
 const search = ref('')
 const statusFilter = ref('all')
 const blankBill = () => ({ id: null, title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true, templateId: null, period: null })
@@ -508,6 +537,7 @@ onMounted(() => {
 .action-card { background: var(--peach); position: relative; overflow: hidden; }.action-card::after { content: ''; position: absolute; width: 130px; height: 130px; border: 1px solid rgba(23,37,31,.3); border-radius: 50%; right: -45px; top: -45px; box-shadow: 0 0 0 25px rgba(23,37,31,.04), 0 0 0 50px rgba(23,37,31,.03); }.action-card > span { font: 10px 'DM Mono'; }.action-card > .q-icon { position: absolute; right: 25px; top: 26px; font-size: 30px; }.action-card h2 { font-size: 24px; line-height: 1.15; margin: 45px 0 10px; max-width: 320px; }.action-card p { font-size: 11px; line-height: 1.5; max-width: 300px; }.action-card button { border: 0; border-bottom: 1px solid; background: transparent; padding: 5px 0; font-weight: 800; cursor: pointer; }
 .section-block { margin-top: 44px; }.section-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 15px; }.section-title span { font-size: 9px; color: var(--muted); }.section-title h2 { margin: 4px 0 0; font-size: 25px; }.bill-list { border-top: 1px solid var(--ink); }.bill-row { display: grid; grid-template-columns: 58px minmax(220px,1fr) 130px 145px 20px; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); padding: 15px 4px; cursor: pointer; transition: .2s ease; }.bill-row:hover { background: rgba(255,255,255,.55); padding-left: 10px; }.date-tile { background: white; border: 1px solid var(--line); padding: 7px; text-align: center; }.date-tile b { font-size: 19px; display: block; line-height: 1; }.date-tile span { font: 9px 'DM Mono'; }.bill-title { display: flex; gap: 10px; align-items: baseline; }.bill-title strong { font-size: 15px; }.bill-title span { color: var(--muted); font-size: 10px; }.bill-main small { color: var(--muted); font-size: 10px; }.bill-method span, .bill-method small { display: block; font-size: 11px; }.bill-method small { color: var(--muted); }.bill-value { text-align: right; }.bill-value strong { display: block; font-size: 15px; }.status { display: inline-flex; margin-top: 5px; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; background: #e5e2d9; border-radius: 4px; }.status--document_found { background: #dff0c5; }.status--scheduled { background: #d7e9f2; }.status--paid { background: var(--acid); }.status--waiting_document { background: #f4d3bd; }.row-arrow { color: var(--muted); }.row-pay { color: var(--muted); }.row-pay:hover { color: var(--ink); }
 .message-preview { margin-top: 55px; background: #dbe4dd; padding: 35px; border-radius: 22px; display: grid; grid-template-columns: .9fr 1fr; gap: 55px; align-items: center; }.phone-card { background: #efece4; border: 7px solid var(--ink); border-radius: 25px; padding: 18px; max-width: 350px; box-shadow: 11px 12px 0 rgba(23,37,31,.16); transform: rotate(-1deg); }.phone-card__head { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 12px; }.phone-card__head > .q-icon { background: #25d366; border-radius: 50%; color: white; padding: 7px; }.phone-card__head strong, .phone-card__head span { display: block; font-size: 11px; }.phone-card__head span { color: var(--muted); font-size: 8px; }.chat-bubble { margin: 18px 0 4px 20px; background: #d8fdd2; padding: 14px; border-radius: 10px 2px 10px 10px; font-size: 11px; line-height: 1.45; }.chat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 12px; }.chat-actions button { border: 1px solid #7baf77; background: transparent; border-radius: 5px; font-size: 9px; padding: 7px; cursor: pointer; }.message-copy > span { font-size: 9px; }.message-copy h2 { font-family: Georgia, serif; font-size: 40px; line-height: 1; margin: 10px 0 15px; font-weight: 400; }.message-copy p { font-size: 12px; line-height: 1.7; max-width: 480px; }.message-stats { display: flex; gap: 25px; margin-top: 25px; }.message-stats div { border-left: 1px solid; padding-left: 10px; }.message-stats b, .message-stats span { display: block; }.message-stats b { font: 14px 'DM Mono'; }.message-stats span { font-size: 9px; color: var(--muted); }
+.heading-actions { display: flex; gap: 10px; align-items: center; }
 .bills-tab-toggle { margin-bottom: 18px; }
 .templates-hint { color: var(--muted); font-size: 12px; max-width: 520px; margin-bottom: 18px; }
 .compact-card--inactive { opacity: .55; }
