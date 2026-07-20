@@ -25,10 +25,30 @@ Nunca use uma chave `service_role` no frontend.
 ## PWA de produção
 
 ```bash
-npm run build
+npm run generate
 ```
 
-O resultado de produção fica em `.output/`; os arquivos públicos e o service worker ficam em `.output/public/`.
+O site estático fica em `.output/public/` (inclui service worker e manifesto).
+
+## Deploy (Vercel)
+
+Produção: **https://provisiona-one.vercel.app**
+
+O projeto Vercel `provisiona` está vinculado a este diretório (`.vercel/`) e ao repositório GitHub. O `vercel.json` define build estático (`npm run generate` → `.output/public`). Para publicar:
+
+```bash
+npx vercel deploy --prod --yes
+```
+
+As variáveis `NUXT_PUBLIC_SUPABASE_URL` e `NUXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` já estão configuradas nos ambientes production e preview da Vercel.
+
+## Login com Google
+
+1. No Google Cloud Console, crie uma credencial OAuth (Aplicativo da Web) com redirect `https://<ref>.supabase.co/auth/v1/callback`.
+2. No painel Supabase → Authentication → Providers → Google, ative e informe Client ID/Secret.
+3. Em Authentication → URL Configuration, adicione `http://localhost:9100/**` e `https://provisiona-one.vercel.app/**`.
+
+O link mágico por e-mail funciona sem configuração extra.
 
 ## Escopo do MVP
 
