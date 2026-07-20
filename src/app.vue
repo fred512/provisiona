@@ -1,5 +1,19 @@
 <template>
-  <q-layout view="hHh LpR fFf" class="app-shell mobile-first-app">
+  <div v-if="!authReady" class="boot-screen"><div class="boot-mark"><span></span><span></span><span></span></div></div>
+
+  <div v-else-if="requireLogin" class="login-screen">
+    <div class="login-card">
+      <div class="login-brand"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><div class="brand-name">PROVISIONA</div><div class="brand-caption">contas em dia, cabeça livre</div></div></div>
+      <h1>Suas contas do mês,<br><em>sem susto.</em></h1>
+      <p>Entre para ver seus boletos, provisões e lembretes — protegidos por usuário e sincronizados com segurança.</p>
+      <q-btn class="google-btn full-width" unelevated icon="login" label="Entrar com Google" :loading="authBusy" @click="loginGoogle" />
+      <div class="auth-divider mono">OU RECEBA UM LINK POR E-MAIL</div>
+      <q-input v-model="authEmail" outlined dense type="email" label="Seu e-mail" @keyup.enter="sendMagicLink" />
+      <q-btn flat class="full-width" color="dark" label="Enviar link de acesso" @click="sendMagicLink" />
+    </div>
+  </div>
+
+  <q-layout v-else view="hHh LpR fFf" class="app-shell mobile-first-app">
     <q-header class="topbar text-white">
       <q-toolbar class="topbar__inner">
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -52,47 +66,46 @@
         <section class="content">
           <template v-if="activeView === 'dashboard'">
             <header class="page-heading reveal">
-              <div><span class="eyebrow mono">VISÃO GERAL · JUL/AGO 2026</span><h1>O que precisa<br><em>acontecer agora.</em></h1></div>
-              <div class="today mono">HOJE<br><b>19 JUL</b></div>
+              <div>
+                <span class="eyebrow mono">DESPESAS DO MÊS</span>
+                <h1 class="dash-title">{{ dashMonthLabel }}</h1>
+              </div>
+              <div class="month-nav">
+                <q-btn round flat dense icon="chevron_left" aria-label="Mês anterior" @click="shiftDashMonth(-1)" />
+                <span class="mono">{{ dashMonthShort }}</span>
+                <q-btn round flat dense icon="chevron_right" aria-label="Próximo mês" @click="shiftDashMonth(1)" />
+              </div>
             </header>
 
-            <section class="hero-grid reveal reveal--2">
-              <article class="fund-card">
-                <div class="fund-card__top"><span>NECESSÁRIO NO NUBANK</span><q-icon name="account_balance_wallet" /></div>
-                <strong>{{ money(nubankNeed) }}</strong>
-                <p>para cobrir {{ nubankBills.length }} compromissos em aberto</p>
-                <div class="fund-progress"><span style="width: 38%"></span></div>
-                <div class="fund-meta"><span>Saldo informado <b>{{ money(900) }}</b></span><span>Falta provisionar <b>{{ money(Math.max(nubankNeed - 900, 0)) }}</b></span></div>
+            <section class="month-tiles reveal reveal--2">
+              <article class="tile-hero">
+                <span class="mono">TOTAL A PAGAR</span>
+                <strong>{{ money(dashTotal) }}</strong>
+                <small>{{ dashBills.length }} compromisso{{ dashBills.length === 1 ? '' : 's' }} · {{ dashMonthShort }}</small>
+                <div class="tile-bar"><span :style="{ width: (dashTotal ? Math.round(dashConfirmed / dashTotal * 100) : 0) + '%' }"></span></div>
+                <div class="tile-bar-legend"><span>Confirmado {{ money(dashConfirmed) }}</span><span>A confirmar {{ money(dashPending) }}</span></div>
               </article>
-              <article class="action-card">
-                <span class="mono">AÇÃO PRIORITÁRIA</span>
-                <q-icon name="bolt" />
-                <h2>{{ waitingDocuments }} documentos ainda não chegaram</h2>
-                <p>O assistente procurará novamente no Gmail e WhatsApp amanhã às 08:00.</p>
-                <button @click="activeView = 'sources'">Revisar fontes</button>
-              </article>
+              <article><span class="mono">CONFIRMADO</span><strong>{{ money(dashConfirmed) }}</strong><small>{{ dashConfirmedList.length }} com boleto localizado</small></article>
+              <article><span class="mono">A CONFIRMAR</span><strong>{{ money(dashPending) }}</strong><small>{{ dashPendingList.length }} aguardando documento</small></article>
+              <article><span class="mono">PAGO</span><strong>{{ money(dashPaid) }}</strong><small>{{ Math.round(dashTotal ? dashPaid / dashTotal * 100 : 0) }}% executado</small></article>
             </section>
 
             <section class="section-block reveal reveal--3">
-              <div class="section-title"><div><span class="mono">PRÓXIMOS VENCIMENTOS</span><h2>Linha de execução</h2></div><button @click="activeView = 'bills'">Ver todas</button></div>
+              <div class="section-title">
+                <div><span class="mono">COMPROMISSOS DE {{ dashMonthShort }}</span><h2>O que pagar</h2></div>
+                <q-btn outline dense icon="sync" :loading="syncing" label="Buscar boletos" @click="syncBoletos" />
+              </div>
               <div class="bill-list">
-                <article v-for="bill in sortedBills.slice(0, 4)" :key="bill.id" class="bill-row" @click="openEditor(bill)">
+                <article v-for="bill in dashBills" :key="bill.id" class="bill-row" @click="openEditor(bill)">
                   <div class="date-tile"><b>{{ day(bill.dueDate) }}</b><span>{{ month(bill.dueDate) }}</span></div>
-                  <div class="bill-main"><div class="bill-title"><strong>{{ bill.title }}</strong><span>{{ bill.category }}</span></div><small><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }} · {{ bill.sender }}</small></div>
-                  <div class="bill-method"><span>{{ bill.paymentMethod }}</span><small>{{ bill.bankAccount }}</small></div>
-                  <div class="bill-value"><strong>{{ money(bill.amount) }}</strong><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span></div>
+                  <div class="bill-main"><div class="bill-title"><strong>{{ bill.title }}</strong><span>{{ bill.category }}</span></div><small><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.bankAccount }} · {{ bill.paymentMethod }}</small></div>
+                  <div class="bill-method"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span></div>
+                  <div class="bill-value"><strong>{{ money(bill.amount) }}</strong><small v-if="bill.status === 'waiting_document'" class="forecast-note">previsão</small></div>
                   <q-btn v-if="bill.status !== 'paid'" class="row-pay" round flat icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn>
                   <q-icon v-else name="chevron_right" class="row-arrow" />
                 </article>
+                <p v-if="!dashBills.length" class="empty-note">Nenhum compromisso em {{ dashMonthLabel }}. Cadastre um modelo ou toque em “Buscar boletos”.</p>
               </div>
-            </section>
-
-            <section class="message-preview reveal reveal--4">
-              <div class="phone-card">
-                <div class="phone-card__head"><q-icon name="chat" /><div><strong>Provisiona</strong><span>assistente · agora</span></div></div>
-                <div class="chat-bubble">Olá, Carlos. Encontrei o boleto da <b>UVV</b> enviado por financeiro@uvv.br.<br><br><b>R$ 1.982,70</b> até 01/12 · vence 05/12.<div class="chat-actions"><button @click="copyDemoBarcode">Copiar código</button><button @click="openEditor(uvvBill)">Conferir</button></div></div>
-              </div>
-              <div class="message-copy"><span class="mono">ALERTAS QUE RESOLVEM</span><h2>Do lembrete<br>para a ação.</h2><p>Mensagens contextualizadas trazem remetente, valor correto, prazo do desconto e a próxima decisão — sem exigir que você abra o PDF novamente.</p><div class="message-stats"><div><b>D−7</b><span>procurar</span></div><div><b>D−1</b><span>provisionar</span></div><div><b>D+1</b><span>confirmar</span></div></div></div>
             </section>
           </template>
 
@@ -237,8 +250,9 @@ const themeMode = ref(storedTheme || systemTheme)
 $q.dark.set(themeMode.value === 'dark')
 const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, materialize, pushLocal, goLocal } = useBills()
 const { templates, activeTemplates, loadTemplates, saveTemplate, removeTemplate, pushLocalTemplates, goLocalTemplates } = useTemplates()
-const { user, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
+const { user, ready: authReady, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
 const avatarUrl = computed(() => user.value?.user_metadata?.avatar_url || user.value?.user_metadata?.picture || '')
+const requireLogin = computed(() => isSupabaseConfigured && !user.value)
 const activeView = ref('dashboard')
 const editorOpen = ref(false)
 const authOpen = ref(false)
@@ -303,6 +317,21 @@ const nav = computed(() => [
   { id: 'sources', label: 'Fontes', icon: 'alternate_email', count: waitingDocuments.value },
   { id: 'alerts', label: 'Alertas', icon: 'forum', count: scheduled.value },
 ])
+
+const dashMonth = ref(new Date().toISOString().slice(0, 7))
+const monthKey = (bill) => (bill.period || bill.dueDate?.slice(0, 7) || '')
+const dashBills = computed(() => sortedBills.value.filter((b) => monthKey(b) === dashMonth.value))
+const sumBills = (list) => list.reduce((s, b) => s + Number(b.amount || 0), 0)
+const dashTotal = computed(() => sumBills(dashBills.value))
+const dashConfirmedList = computed(() => dashBills.value.filter((b) => b.status !== 'waiting_document'))
+const dashPendingList = computed(() => dashBills.value.filter((b) => b.status === 'waiting_document'))
+const dashConfirmed = computed(() => sumBills(dashConfirmedList.value))
+const dashPending = computed(() => sumBills(dashPendingList.value))
+const dashPaid = computed(() => sumBills(dashBills.value.filter((b) => b.status === 'paid')))
+const dashMonthLabel = computed(() => { const d = new Date(`${dashMonth.value}-01T12:00:00Z`); return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) })
+const dashMonthShort = computed(() => { const d = new Date(`${dashMonth.value}-01T12:00:00Z`); return new Intl.DateTimeFormat('pt-BR', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(d).replace('.', '').toUpperCase() })
+function shiftDashMonth(delta) { const [y, m] = dashMonth.value.split('-').map(Number); const d = new Date(Date.UTC(y, m - 1 + delta, 1)); dashMonth.value = d.toISOString().slice(0, 7) }
+const todayLabel = computed(() => new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', timeZone: 'UTC' }).format(new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00Z`)).replace('.', '').toUpperCase())
 
 const reportMonth = ref(new Date().toISOString().slice(0, 7))
 const monthOptions = computed(() => {
@@ -546,6 +575,30 @@ onMounted(() => {
 .section-block { margin-top: 44px; }.section-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 15px; }.section-title span { font-size: 9px; color: var(--muted); }.section-title h2 { margin: 4px 0 0; font-size: 25px; }.bill-list { border-top: 1px solid var(--ink); }.bill-row { display: grid; grid-template-columns: 58px minmax(220px,1fr) 130px 145px 20px; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); padding: 15px 4px; cursor: pointer; transition: .2s ease; }.bill-row:hover { background: rgba(255,255,255,.55); padding-left: 10px; }.date-tile { background: white; border: 1px solid var(--line); padding: 7px; text-align: center; }.date-tile b { font-size: 19px; display: block; line-height: 1; }.date-tile span { font: 9px 'DM Mono'; }.bill-title { display: flex; gap: 10px; align-items: baseline; }.bill-title strong { font-size: 15px; }.bill-title span { color: var(--muted); font-size: 10px; }.bill-main small { color: var(--muted); font-size: 10px; }.bill-method span, .bill-method small { display: block; font-size: 11px; }.bill-method small { color: var(--muted); }.bill-value { text-align: right; }.bill-value strong { display: block; font-size: 15px; }.status { display: inline-flex; margin-top: 5px; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; background: #e5e2d9; border-radius: 4px; }.status--document_found { background: #dff0c5; }.status--scheduled { background: #d7e9f2; }.status--paid { background: var(--acid); }.status--waiting_document { background: #f4d3bd; }.row-arrow { color: var(--muted); }.row-pay { color: var(--muted); }.row-pay:hover { color: var(--ink); }
 .message-preview { margin-top: 55px; background: #dbe4dd; padding: 35px; border-radius: 22px; display: grid; grid-template-columns: .9fr 1fr; gap: 55px; align-items: center; }.phone-card { background: #efece4; border: 7px solid var(--ink); border-radius: 25px; padding: 18px; max-width: 350px; box-shadow: 11px 12px 0 rgba(23,37,31,.16); transform: rotate(-1deg); }.phone-card__head { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 12px; }.phone-card__head > .q-icon { background: #25d366; border-radius: 50%; color: white; padding: 7px; }.phone-card__head strong, .phone-card__head span { display: block; font-size: 11px; }.phone-card__head span { color: var(--muted); font-size: 8px; }.chat-bubble { margin: 18px 0 4px 20px; background: #d8fdd2; padding: 14px; border-radius: 10px 2px 10px 10px; font-size: 11px; line-height: 1.45; }.chat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 12px; }.chat-actions button { border: 1px solid #7baf77; background: transparent; border-radius: 5px; font-size: 9px; padding: 7px; cursor: pointer; }.message-copy > span { font-size: 9px; }.message-copy h2 { font-family: Georgia, serif; font-size: 40px; line-height: 1; margin: 10px 0 15px; font-weight: 400; }.message-copy p { font-size: 12px; line-height: 1.7; max-width: 480px; }.message-stats { display: flex; gap: 25px; margin-top: 25px; }.message-stats div { border-left: 1px solid; padding-left: 10px; }.message-stats b, .message-stats span { display: block; }.message-stats b { font: 14px 'DM Mono'; }.message-stats span { font-size: 9px; color: var(--muted); }
 .heading-actions { display: flex; gap: 10px; align-items: center; }
+.boot-screen { position: fixed; inset: 0; display: grid; place-items: center; background: var(--canvas, #101a15); }
+.boot-mark { width: 44px; height: 44px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; transform: rotate(-8deg); animation: boot-pulse 1s ease-in-out infinite; }
+.boot-mark span { background: var(--acid); border-radius: 3px; }.boot-mark span:nth-child(2) { transform: translateY(6px); }.boot-mark span:nth-child(3) { transform: translateY(-4px); background: var(--peach); }
+@keyframes boot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.login-screen { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: radial-gradient(120% 100% at 50% 0%, #17251f 0%, #101a15 60%); }
+.login-card { width: min(420px, 100%); background: var(--surface, #fff); border-radius: 22px; padding: 32px 28px; box-shadow: 0 24px 60px rgba(0,0,0,.35); }
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.login-brand .brand-name { font-weight: 800; letter-spacing: .16em; font-size: 14px; color: var(--text, #17251f); }
+.login-brand .brand-caption { color: var(--muted); font-size: 10px; }
+.login-card h1 { font-size: clamp(28px, 5vw, 38px); line-height: 1.02; letter-spacing: -.04em; margin: 4px 0 12px; }
+.login-card h1 em { font-family: Georgia, serif; font-weight: 400; color: var(--muted); }
+.login-card > p { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 22px; }
+.login-card .google-btn { min-height: 48px; border-radius: 12px; }
+.month-nav { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 6px; }.month-nav .mono { font-size: 11px; min-width: 58px; text-align: center; }
+.dash-title { text-transform: capitalize; font-size: clamp(30px, 4vw, 48px) !important; }
+.month-tiles { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 14px; }
+.month-tiles article { background: var(--surface, rgba(255,255,255,.66)); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.month-tiles .mono { font-size: 9px; color: var(--muted); }
+.month-tiles strong { display: block; font-size: clamp(20px, 2.4vw, 28px); letter-spacing: -.03em; margin: 8px 0 3px; }
+.month-tiles small { color: var(--muted); font-size: 10px; }
+.tile-hero { background: var(--ink) !important; color: #fff; }.tile-hero .mono, .tile-hero small { color: #aeb8b3 !important; }.tile-hero strong { font-size: clamp(30px, 4vw, 46px) !important; }
+.tile-bar { height: 5px; background: rgba(255,255,255,.14); border-radius: 3px; margin: 16px 0 8px; overflow: hidden; }.tile-bar span { display: block; height: 100%; background: var(--acid); }
+.tile-bar-legend { display: flex; justify-content: space-between; font-size: 9px; color: #aeb8b3; }
+.forecast-note { display: block; font-size: 9px; color: var(--muted); font-style: italic; }
 .bills-tab-toggle { margin-bottom: 18px; }
 .templates-hint { color: var(--muted); font-size: 12px; max-width: 520px; margin-bottom: 18px; }
 .compact-card--inactive { opacity: .55; }
@@ -663,10 +716,21 @@ onMounted(() => {
 .mobile-first-app .cards-grid,
 .mobile-first-app .source-grid,
 .mobile-first-app .report-tiles,
-.mobile-first-app .filters { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.mobile-first-app .month-tiles,
+.mobile-first-app .filters { display: grid; grid-template-columns: 1fr; gap: 12px; }
 .mobile-first-app .trend-value { display: none; }
 .mobile-first-app .trend-col.active .trend-value { display: block; }
-@media (min-width: 640px) { .mobile-first-app .report-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .mobile-first-app .trend-value { display: block; } }
+.mobile-first-app .month-nav { align-self: flex-start; margin-top: 10px; }
+@media (min-width: 640px) {
+  .mobile-first-app .report-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .mobile-first-app .month-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mobile-first-app .month-tiles .tile-hero { grid-column: 1 / -1; }
+  .mobile-first-app .trend-value { display: block; }
+}
+@media (min-width: 1024px) {
+  .mobile-first-app .month-tiles { grid-template-columns: 1.6fr 1fr 1fr 1fr; }
+  .mobile-first-app .month-tiles .tile-hero { grid-column: auto; }
+}
 .mobile-first-app .fund-card,
 .mobile-first-app .action-card,
 .mobile-first-app .message-preview { min-height: auto; padding: 22px 20px; border-radius: 16px; }

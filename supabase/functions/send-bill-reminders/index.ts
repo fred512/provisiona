@@ -29,7 +29,7 @@ function formatDate(iso) {
   return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${iso}T12:00:00Z`))
 }
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
   const resendApiKey = Deno.env.get('RESEND_API_KEY')
@@ -38,6 +38,27 @@ Deno.serve(async () => {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey)
+
+  // Disparo de teste: { test: true, user_id } → envia um e-mail de amostra agora.
+  let payload: any = {}
+  try { payload = await req.json() } catch { /* sem corpo */ }
+  if (payload?.test && payload?.user_id) {
+    const { data: userData } = await supabase.auth.admin.getUserById(payload.user_id)
+    const email = userData?.user?.email
+    if (!email) return new Response(JSON.stringify({ error: 'sem_email' }), { status: 400 })
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Provisiona <onboarding@resend.dev>',
+        to: [email],
+        subject: 'Provisiona — teste de lembrete',
+        html: '<div style="font-family:sans-serif;max-width:520px;margin:auto;"><h2 style="color:#17251f;">Teste de lembrete ✅</h2><p>Se você recebeu este e-mail, os lembretes de vencimento estão funcionando. Você será avisado em D−7, D−1, no dia e D+1 de cada boleto em aberto.</p></div>',
+      }),
+    })
+    return new Response(JSON.stringify({ sent: res.ok, to: email, status: res.status }), { status: res.ok ? 200 : 502, headers: { 'Content-Type': 'application/json' } })
+  }
+
   const today = todayIsoInSaoPaulo()
 
   const targets = EVENT_STAGES.map((stage) => ({ ...stage, dueDate: addDaysIso(today, stage.offsetDays) }))

@@ -1,17 +1,20 @@
 import { ref } from 'vue'
 
 const user = ref(null)
+const ready = ref(false)
 let started = false
 let sessionHandled = false
 
 export function useAuth() {
   const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
+  if (!isSupabaseConfigured) ready.value = true
 
   function init(onSession) {
     if (started || !isSupabaseConfigured) return
     started = true
     supabase.auth.onAuthStateChange((event, session) => {
       user.value = session?.user || null
+      ready.value = true
       // O refresh token do Google só vem no retorno do consentimento OAuth.
       // Capturamos e gravamos para a Edge Function ler os boletos depois.
       if (session?.provider_refresh_token) {
@@ -54,5 +57,5 @@ export function useAuth() {
     if (error) throw error
   }
 
-  return { user, init, signInWithGoogle, signInWithEmail, signOut }
+  return { user, ready, init, signInWithGoogle, signInWithEmail, signOut }
 }
