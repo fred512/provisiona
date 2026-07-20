@@ -55,13 +55,17 @@ function parseBoleto(input: string) {
 // ---------- Extração de candidatos e datas de um texto ----------
 function candidateLines(text: string): string[] {
   const out = new Set<string>()
-  const spaced = text.match(/\d[\d.\s]{40,72}\d/g) || []
-  for (const m of spaced) {
+  const runs = [...(text.match(/\d[\d.\s]{40,90}\d/g) || []), ...(text.match(/\d{44,60}/g) || [])]
+  for (const m of runs) {
     const d = m.replace(/\D/g, '')
-    if (d.length === 47 || d.length === 48) out.add(d)
+    // A extração de PDF às vezes gruda um dígito vizinho na linha digitável;
+    // testamos os recortes de 47 e 48 dígitos das duas pontas (o mod10 valida).
+    for (const len of [47, 48]) {
+      if (d.length < len) continue
+      out.add(d.slice(0, len))
+      out.add(d.slice(d.length - len))
+    }
   }
-  const contiguous = text.match(/\d{47,48}/g) || []
-  for (const d of contiguous) if (d.length === 47 || d.length === 48) out.add(d)
   return [...out]
 }
 
@@ -96,7 +100,7 @@ async function gmail(path: string, token: string) {
   const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!res.ok) throw new Error(`gmail ${path}: ${res.status}`)
+  if (!res.ok) throw new Error(`gmail ${res.status}: ${(await res.text()).slice(0, 400)}`)
   return res.json()
 }
 
@@ -116,35 +120,70 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
   try {
     const pdf = await getDocumentProxy(bytes)
     const { text } = await extractText(pdf, { mergePages: true })
+    try { await (pdf as any).destroy?.() } catch { /* noop */ }
     return Array.isArray(text) ? text.join('\n') : text
   } catch {
     return ''
   }
 }
 
-// Extrai todos os boletos de uma mensagem Gmail (corpo + PDFs).
-async function boletosFromMessage(messageId: string, token: string) {
+type Boleto = { amount: number | null; dueDate: string | null; raw: string }
+
+function normalizeText(text: string) {
+  return text
+    .replace(/&#47;/g, '/').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+}
+
+function scanText(raw0: string, found: Boleto[]) {
+  const text = normalizeText(raw0)
+  const textDue = dueDateFromText(text)
+  for (const raw of candidateLines(text)) {
+    const parsed = parseBoleto(raw)
+    if (parsed) found.push({ amount: parsed.amount, dueDate: parsed.dueDate || textDue, raw })
+  }
+}
+
+// Extrai boletos de uma mensagem: corpo (barato) sempre; PDFs só dentro do
+// orçamento e ignorando anexos já processados (evita OOM e retrabalho).
+function subjectOf(payload: any): string {
+  const h = (payload?.headers || []).find((x: any) => (x.name || '').toLowerCase() === 'subject')
+  return h?.value || ''
+}
+
+async function boletosFromMessage(
+  supabase: any, userId: string, messageId: string, token: string, budget: { pdfs: number; more: boolean },
+): Promise<Boleto[]> {
   const msg = await gmail(`messages/${messageId}?format=full`, token)
   const acc = { bodies: [] as string[], pdfs: [] as { attachmentId: string }[] }
   walkParts(msg.payload, acc)
 
-  const found: { amount: number | null; dueDate: string | null; raw: string }[] = []
-  const consume = (text: string) => {
-    const textDue = dueDateFromText(text)
-    for (const raw of candidateLines(text)) {
-      const parsed = parseBoleto(raw)
-      if (parsed) found.push({ amount: parsed.amount, dueDate: parsed.dueDate || textDue, raw })
-    }
+  const found: Boleto[] = []
+  for (const body of acc.bodies) scanText(body, found)
+
+  for (const pdf of acc.pdfs) {
+    const { data: already } = await supabase.from('synced_attachments')
+      .select('attachment_id').eq('user_id', userId).eq('message_id', messageId).eq('attachment_id', pdf.attachmentId).maybeSingle()
+    if (already) continue
+    if (budget.pdfs <= 0) { budget.more = true; continue }
+    budget.pdfs--
+    const att = await gmail(`messages/${messageId}/attachments/${pdf.attachmentId}`, token)
+    if (att.data) scanText(await pdfText(b64urlToBytes(att.data)), found)
+    await supabase.from('synced_attachments').insert({ user_id: userId, message_id: messageId, attachment_id: pdf.attachmentId })
   }
 
-  for (const body of acc.bodies) consume(body)
-  for (const pdf of acc.pdfs) {
-    const att = await gmail(`messages/${messageId}/attachments/${pdf.attachmentId}`, token)
-    if (att.data) consume(await pdfText(b64urlToBytes(att.data)))
-  }
-  // dedupe por linha digitável
   const seen = new Set<string>()
   return found.filter((b) => (seen.has(b.raw) ? false : (seen.add(b.raw), true)))
+}
+
+const STOPWORDS = new Set(['CONTA', 'FATURA', 'BOLETO', 'BOLETOS', 'TAXA', 'ASSUNTO', 'CARTAO', 'MENSALIDADE', 'MANSALIDADE', 'SEU', 'SUA', 'ESTA', 'DIGITAL', 'CHEGOU', 'DO', 'DA', 'DE', 'PARA'])
+
+// Palavra distintiva do assunto (locator_hint) para estreitar a busca no Gmail.
+function subjectTerm(locatorHint: string): string {
+  const text = (locatorHint || '').replace(/assunto:/gi, ' ')
+  const words = text.toUpperCase().split(/[^A-Z0-9À-Ú]+/).filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+  return words.sort((a, b) => b.length - a.length)[0] || ''
 }
 
 // ---------- Sincronização por usuário ----------
@@ -157,34 +196,42 @@ async function syncUser(supabase: any, userId: string, clientId: string, clientS
 
   let updated = 0
   const details: string[] = []
+  const budget = { pdfs: 4, more: false }
+
+  const senderCount: Record<string, number> = {}
+  for (const tpl of templates || []) if (tpl.sender) senderCount[tpl.sender] = (senderCount[tpl.sender] || 0) + 1
 
   for (const tpl of templates || []) {
     if (!tpl.sender) continue
-    const q = encodeURIComponent(`from:${tpl.sender} has:attachment newer_than:120d`)
-    const list = await gmail(`messages?q=${q}&maxResults=15`, token)
+    if (budget.pdfs <= 0) { budget.more = true; break }
+    // Busca por remetente + assunto distintivo (quando informado no modelo),
+    // o que corta o lixo de e-mails pessoais e extratos sem boleto.
+    const term = subjectTerm(tpl.locator_hint)
+    // Remetente compartilhado sem assunto = ambíguo/aberto demais → ignora.
+    if (!term && senderCount[tpl.sender] > 1) continue
+    let q = `from:${tpl.sender} has:attachment newer_than:120d`
+    if (term) q += ` subject:${term}`
+    const list = await gmail(`messages?q=${encodeURIComponent(q)}&maxResults=6`, token)
     for (const m of list.messages || []) {
-      const boletos = await boletosFromMessage(m.id, token)
+      if (budget.pdfs <= 0) { budget.more = true; break }
+      const boletos = await boletosFromMessage(supabase, userId, m.id, token, budget)
       for (const b of boletos) {
-        if (!b.dueDate) continue // sem período não dá pra casar a ocorrência
+        if (!b.dueDate) continue
         const period = b.dueDate.slice(0, 7)
-        const row = {
-          user_id: userId, template_id: tpl.id, period,
-          title: tpl.title, category: tpl.category,
-          amount: b.amount, nominal_amount: b.amount,
-          due_date: b.dueDate, payer_name: tpl.payer_name,
-          source_channel: tpl.source_channel, sender: tpl.sender,
-          locator_hint: tpl.locator_hint, payment_method: tpl.payment_method,
-          bank_account: tpl.bank_account, status: 'document_found',
-          barcode: b.raw, recurring: true,
-        }
-        // não sobrescreve ocorrência que já tem código de barras
         const { data: existing } = await supabase.from('bills')
           .select('id, barcode').eq('template_id', tpl.id).eq('period', period).maybeSingle()
         if (existing?.barcode) continue
         if (existing) {
-          await supabase.from('bills').update({ amount: row.amount, nominal_amount: row.nominal_amount, due_date: row.due_date, barcode: row.barcode, status: 'document_found' }).eq('id', existing.id)
+          await supabase.from('bills').update({ amount: b.amount, nominal_amount: b.amount, due_date: b.dueDate, barcode: b.raw, status: 'document_found' }).eq('id', existing.id)
         } else {
-          await supabase.from('bills').insert(row)
+          await supabase.from('bills').insert({
+            user_id: userId, template_id: tpl.id, period,
+            title: tpl.title, category: tpl.category,
+            amount: b.amount, nominal_amount: b.amount, due_date: b.dueDate,
+            payer_name: tpl.payer_name, source_channel: tpl.source_channel, sender: tpl.sender,
+            locator_hint: tpl.locator_hint, payment_method: tpl.payment_method,
+            bank_account: tpl.bank_account, status: 'document_found', barcode: b.raw, recurring: true,
+          })
         }
         updated++
         details.push(`${tpl.title} ${period}: ${b.amount ?? '—'}`)
@@ -193,7 +240,7 @@ async function syncUser(supabase: any, userId: string, clientId: string, clientS
   }
 
   await supabase.from('user_integrations').update({ last_sync_at: new Date().toISOString() }).eq('user_id', userId)
-  return { userId, updated, details }
+  return { userId, updated, details, more: budget.more }
 }
 
 const cors = {
@@ -223,6 +270,25 @@ Deno.serve(async (req) => {
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
+
+  // Modo diagnóstico: { debug_message_id, user_id } → devolve o que foi extraído.
+  let payload: any = {}
+  try { payload = await req.json() } catch { /* sem corpo */ }
+  if (payload?.debug_message_id) {
+    const { data: integ } = await admin.from('user_integrations').select('google_refresh_token').eq('user_id', payload.user_id).maybeSingle()
+    const token = await googleAccessToken(integ.google_refresh_token, clientId, clientSecret)
+    const msg = await gmail(`messages/${payload.debug_message_id}?format=full`, token)
+    const acc = { bodies: [] as string[], pdfs: [] as { attachmentId: string }[] }
+    walkParts(msg.payload, acc)
+    const out: any = { bodyCandidates: [], pdfs: [] }
+    for (const body of acc.bodies) out.bodyCandidates.push(...candidateLines(body))
+    for (const pdf of acc.pdfs.slice(0, 2)) {
+      const att = await gmail(`messages/${payload.debug_message_id}/attachments/${pdf.attachmentId}`, token)
+      const text = att.data ? await pdfText(b64urlToBytes(att.data)) : ''
+      out.pdfs.push({ len: text.length, snippet: text.slice(0, 500), candidates: candidateLines(text) })
+    }
+    return json(out)
+  }
 
   try {
     if (targetUserId) {

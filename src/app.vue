@@ -253,17 +253,25 @@ async function syncBoletos() {
   }
   syncing.value = true
   try {
-    const { data, error } = await supabase.functions.invoke('sync-boletos')
-    if (error) throw error
-    if (data?.error === 'sem_gmail_conectado') {
-      $q.notify({ type: 'warning', message: 'Reautorize o Google com permissão de leitura do Gmail (saia e entre de novo).' })
-    } else if (data?.error) {
-      $q.notify({ type: 'negative', message: `Sincronização: ${data.error}` })
-    } else {
-      const n = data?.updated || 0
-      $q.notify({ color: 'dark', textColor: 'white', icon: 'download_done', message: n ? `${n} boleto${n > 1 ? 's' : ''} carregado${n > 1 ? 's' : ''} do Gmail.` : 'Nenhum boleto novo encontrado.' })
-      if (n) await load()
+    let total = 0
+    // A função processa poucos PDFs por vez (limite de recursos); repetimos
+    // enquanto ela indicar que há mais lotes a processar.
+    for (let i = 0; i < 6; i++) {
+      const { data, error } = await supabase.functions.invoke('sync-boletos')
+      if (error) throw error
+      if (data?.error === 'sem_gmail_conectado') {
+        $q.notify({ type: 'warning', message: 'Reautorize o Google com permissão de leitura do Gmail (saia e entre de novo).' })
+        return
+      }
+      if (data?.error) {
+        $q.notify({ type: 'negative', message: `Sincronização: ${data.error}` })
+        return
+      }
+      total += data?.updated || 0
+      if (!data?.more) break
     }
+    $q.notify({ color: 'dark', textColor: 'white', icon: 'download_done', message: total ? `${total} boleto${total > 1 ? 's' : ''} carregado${total > 1 ? 's' : ''} do Gmail.` : 'Nenhum boleto novo encontrado.' })
+    if (total) await load()
   } catch (e) {
     $q.notify({ type: 'negative', message: e.message })
   } finally {
