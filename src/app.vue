@@ -162,7 +162,7 @@
       <q-card class="editor-card">
         <q-card-section class="editor-head"><div><span class="mono">{{ draft.id ? 'EDITAR COMPROMISSO' : 'NOVO COMPROMISSO' }}</span><h2>{{ draft.id ? draft.title : 'Cadastrar despesa' }}</h2></div><q-btn round flat icon="close" v-close-popup /></q-card-section>
         <q-card-section class="editor-body q-gutter-y-md">
-          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" /><q-input v-model.number="draft.amount" outlined type="number" step="0.01" prefix="R$" label="Valor para pagamento" hint="Deixe em branco se ainda não sabe" lazy-rules :rules="[v => (v === null || v === '' || Number(v) >= 0) || 'Valor não pode ser negativo']" /><q-input v-model.number="draft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor nominal" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label lazy-rules :rules="[v => !!v || 'Informe o vencimento']" /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
+          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" /><q-input v-model="amountText" outlined type="text" inputmode="decimal" prefix="R$" label="Valor para pagamento" hint="Deixe em branco se ainda não sabe" lazy-rules :rules="[v => { const n = parseCurrencyInput(v); return v === '' || (n !== null && n >= 0) || 'Valor não pode ser negativo' }]" @blur="onAmountBlur" /><q-input v-model="nominalAmountText" outlined type="text" inputmode="decimal" prefix="R$" label="Valor nominal" @blur="onNominalAmountBlur" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label lazy-rules :rules="[v => !!v || 'Informe o vencimento']" /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
           <div class="form-section"><span class="mono">02 · ONDE LOCALIZAR</span><div class="form-grid"><q-select v-model="draft.sourceChannel" outlined label="Fonte" :options="sourceOptions" /><q-input v-model="draft.sender" outlined label="Remetente esperado" /><q-input v-model="draft.locatorHint" outlined label="Assunto, contato ou regra de busca" class="span-2" /></div></div>
           <div class="form-section"><span class="mono">03 · EXECUÇÃO</span><div class="form-grid"><q-select v-model="draft.paymentMethod" outlined label="Forma de pagamento" :options="paymentOptions" /><q-select v-model="draft.bankAccount" outlined label="Conta pagadora" :options="['Nubank', 'CAIXA']" /><q-select v-model="draft.status" outlined label="Situação" :options="statusOptions" emit-value map-options /><q-input v-model="draft.documentExpectedAt" outlined type="date" label="Documento esperado" stack-label /><q-input v-model="draft.barcode" outlined autogrow label="Linha digitável" class="span-2"><template #append><q-btn v-if="draft.barcode" flat round icon="content_copy" @click="copy(draft.barcode)" /></template></q-input></div></div>
         </q-card-section>
@@ -179,7 +179,7 @@
             <q-select v-model="tplDraft.frequency" outlined label="Frequência" :options="frequencyOptions" emit-value map-options />
             <q-input v-model.number="tplDraft.dueDay" outlined type="number" min="1" max="31" label="Dia do vencimento" />
             <q-input v-model="tplDraft.anchorMonth" outlined type="month" label="Mês de referência" stack-label hint="Um mês em que a despesa é devida" />
-            <q-input v-model.number="tplDraft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor habitual (opcional)" hint="Deixe em branco se o valor varia" />
+            <q-input v-model="tplAmountText" outlined type="text" inputmode="decimal" prefix="R$" label="Valor habitual (opcional)" hint="Deixe em branco se o valor varia" @blur="onTplAmountBlur" />
             <q-select v-model="tplDraft.category" outlined label="Categoria" :options="categories" />
           </div></div>
           <div class="form-section"><span class="mono">02 · ONDE LOCALIZAR</span><div class="form-grid">
@@ -224,6 +224,7 @@ import { useBills } from './composables/useBills'
 import { useAuth } from './composables/useAuth'
 import { FREQUENCY_LABELS, useTemplates } from './composables/useTemplates'
 import { parseBoleto } from './utils/boleto'
+import { formatCurrencyInput, parseCurrencyInput } from './utils/currency'
 
 const $q = useQuasar()
 const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
@@ -244,11 +245,14 @@ const search = ref('')
 const statusFilter = ref('all')
 const blankBill = () => ({ title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true, templateId: null, period: null })
 const draft = reactive(blankBill())
+const amountText = ref('')
+const nominalAmountText = ref('')
 const billsTab = ref('bills')
 const templateOpen = ref(false)
 const currentMonthValue = () => new Date().toISOString().slice(0, 7)
 const blankTemplate = () => ({ title: '', category: 'Moradia', frequency: 'monthly', dueDay: 10, anchorMonth: currentMonthValue(), nominalAmount: null, payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', active: true })
 const tplDraft = reactive(blankTemplate())
+const tplAmountText = ref('')
 const frequencyOptions = Object.entries(FREQUENCY_LABELS).map(([value, label]) => ({ value, label }))
 const frequencyLabel = (value) => FREQUENCY_LABELS[value] || value
 const categories = ['Moradia', 'Educação', 'Saúde', 'Comunicação', 'Assinaturas', 'Impostos', 'Outros']
@@ -308,8 +312,17 @@ const alerts = reactive([
   { when: 'D+1 · 10:00', title: 'Cobrar confirmação', text: 'Só envia se a despesa ainda estiver pendente.', icon: 'notification_important', enabled: false },
 ])
 
-function openEditor(bill) { Object.assign(draft, blankBill(), bill ? { ...bill } : {}); editorOpen.value = true }
+function openEditor(bill) {
+  Object.assign(draft, blankBill(), bill ? { ...bill } : {})
+  amountText.value = formatCurrencyInput(draft.amount)
+  nominalAmountText.value = formatCurrencyInput(draft.nominalAmount)
+  editorOpen.value = true
+}
+function onAmountBlur() { draft.amount = parseCurrencyInput(amountText.value); amountText.value = formatCurrencyInput(draft.amount) }
+function onNominalAmountBlur() { draft.nominalAmount = parseCurrencyInput(nominalAmountText.value); nominalAmountText.value = formatCurrencyInput(draft.nominalAmount) }
 async function saveDraft() {
+  onAmountBlur()
+  onNominalAmountBlur()
   const title = (draft.title || '').trim()
   if (title.length < 2 || title.length > 120) return $q.notify({ type: 'warning', message: 'Nome deve ter entre 2 e 120 caracteres.' })
   if (draft.amount !== null && draft.amount !== '' && Number(draft.amount) < 0) return $q.notify({ type: 'warning', message: 'Valor não pode ser negativo.' })
@@ -339,10 +352,13 @@ async function payBill(bill) {
 
 function openTemplateEditor(tpl) {
   Object.assign(tplDraft, blankTemplate(), tpl ? { ...tpl } : {})
+  tplAmountText.value = formatCurrencyInput(tplDraft.nominalAmount)
   templateOpen.value = true
 }
+function onTplAmountBlur() { tplDraft.nominalAmount = parseCurrencyInput(tplAmountText.value); tplAmountText.value = formatCurrencyInput(tplDraft.nominalAmount) }
 
 async function saveTplDraft() {
+  onTplAmountBlur()
   const title = (tplDraft.title || '').trim()
   if (title.length < 2 || title.length > 120) return $q.notify({ type: 'warning', message: 'Nome deve ter entre 2 e 120 caracteres.' })
   const day = Number(tplDraft.dueDay)
@@ -373,7 +389,7 @@ watch(() => draft.barcode, (value, old) => {
   const parsed = parseBoleto(value)
   if (!parsed) return
   let filled = []
-  if (parsed.amount !== null) { draft.amount = parsed.amount; filled.push('valor') }
+  if (parsed.amount !== null) { draft.amount = parsed.amount; amountText.value = formatCurrencyInput(parsed.amount); filled.push('valor') }
   if (parsed.dueDate) { draft.dueDate = parsed.dueDate; filled.push('vencimento') }
   if (filled.length && draft.status === 'waiting_document') draft.status = 'document_found'
   if (filled.length) $q.notify({ color: 'dark', textColor: 'white', icon: 'qr_code_scanner', message: `Boleto lido: ${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''}.` })
