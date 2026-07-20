@@ -100,6 +100,36 @@
             <div class="cards-grid"><article v-for="bill in filteredBills" :key="bill.id" class="compact-card" @click="openEditor(bill)"><div class="compact-card__top"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span><span class="mono">{{ formatDate(bill.dueDate) }}</span><q-btn v-if="bill.status !== 'paid'" dense round flat size="sm" icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn></div><h3>{{ bill.title }}</h3><strong>{{ money(bill.amount) }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }}</span><span>{{ bill.bankAccount }}</span></div></article></div>
           </template>
 
+          <template v-else-if="activeView === 'report'">
+            <header class="sub-heading"><div><span class="eyebrow mono">RELATÓRIO</span><h1>Análise de gastos</h1></div><q-select v-model="reportMonth" outlined dense :options="monthOptions" emit-value map-options /></header>
+            <section class="report-tiles">
+              <article><span class="mono">TOTAL DO MÊS</span><strong>{{ money(monthTotal) }}</strong><small>{{ monthBills.length }} compromisso{{ monthBills.length === 1 ? '' : 's' }}</small></article>
+              <article><span class="mono">PAGO</span><strong>{{ money(monthPaid) }}</strong><small>{{ Math.round(monthTotal ? (monthPaid / monthTotal) * 100 : 0) }}% executado</small></article>
+              <article><span class="mono">EM ABERTO</span><strong>{{ money(monthTotal - monthPaid) }}</strong><small>a provisionar</small></article>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">LINHA DO TEMPO · 6 MESES</span><h2>Evolução</h2></div></div>
+              <div class="trend-chart" role="img" aria-label="Total de despesas por mês na janela de seis meses">
+                <button v-for="m in monthlySeries" :key="m.value" class="trend-col" :class="{ active: m.value === reportMonth }" :title="`${m.label} · ${money(m.total)}`" @click="reportMonth = m.value">
+                  <span class="trend-value mono">{{ m.total ? money(m.total) : '—' }}</span>
+                  <span class="trend-bar"><i :style="{ height: m.pct + '%' }"></i></span>
+                  <span class="trend-label mono">{{ m.label }}</span>
+                </button>
+              </div>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">POR CATEGORIA</span><h2>Onde o dinheiro vai</h2></div></div>
+              <div class="cat-list">
+                <div v-for="cat in byCategory" :key="cat.name" class="cat-row"><span>{{ cat.name }}</span><span class="cat-bar"><i :style="{ width: cat.pct + '%' }"></i></span><b>{{ money(cat.total) }}</b></div>
+                <p v-if="!byCategory.length" class="empty-note">Sem despesas neste mês.</p>
+              </div>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">POR CONTA PAGADORA</span><h2>Saída por banco</h2></div></div>
+              <div class="account-grid"><article v-for="acc in byAccount" :key="acc.name"><span class="mono">{{ acc.name.toUpperCase() }}</span><strong>{{ money(acc.total) }}</strong></article></div>
+            </section>
+          </template>
+
           <template v-else-if="activeView === 'sources'">
             <header class="sub-heading"><div><span class="eyebrow mono">ORIGENS E REMETENTES</span><h1>Onde cada boleto chega</h1></div></header>
             <div class="source-grid"><article v-for="source in sourceGroups" :key="source.name" class="source-card"><q-icon :name="sourceIcon(source.name)" /><div><span class="mono">{{ source.count }} DESPESA{{ source.count > 1 ? 'S' : '' }}</span><h2>{{ source.name }}</h2><p>{{ source.description }}</p></div><div class="source-list"><div v-for="bill in source.bills" :key="bill.id"><span>{{ bill.title }}</span><small>{{ bill.sender }}</small></div></div></article></div>
@@ -175,9 +205,41 @@ const statusOptions = [{ label: 'Todos os status', value: 'all' }, { label: 'Agu
 const nav = computed(() => [
   { id: 'dashboard', label: 'Visão geral', icon: 'space_dashboard' },
   { id: 'bills', label: 'Contas a pagar', icon: 'receipt_long', count: sortedBills.value.length },
+  { id: 'report', label: 'Relatório', icon: 'insights' },
   { id: 'sources', label: 'Fontes', icon: 'alternate_email', count: waitingDocuments.value },
   { id: 'alerts', label: 'Alertas', icon: 'forum', count: scheduled.value },
 ])
+
+const reportMonth = ref(new Date().toISOString().slice(0, 7))
+const monthOptions = computed(() => {
+  const out = []
+  const now = new Date()
+  for (const offset of [2, 1, 0, -1, -2, -3]) {
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth() + offset, 1))
+    const value = d.toISOString().slice(0, 7)
+    out.push({ value, label: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) })
+  }
+  return out
+})
+const monthBills = computed(() => sortedBills.value.filter((bill) => bill.dueDate.startsWith(reportMonth.value)))
+const monthTotal = computed(() => monthBills.value.reduce((sum, bill) => sum + Number(bill.amount || 0), 0))
+const monthPaid = computed(() => monthBills.value.filter((b) => b.status === 'paid').reduce((s, b) => s + Number(b.amount || 0), 0))
+const byCategory = computed(() => {
+  const map = {}
+  for (const bill of monthBills.value) map[bill.category] = (map[bill.category] || 0) + Number(bill.amount || 0)
+  const max = Math.max(...Object.values(map), 1)
+  return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, total]) => ({ name, total, pct: Math.round((total / max) * 100) }))
+})
+const byAccount = computed(() => ['Nubank', 'CAIXA'].map((name) => ({ name, total: monthBills.value.filter((b) => b.bankAccount === name).reduce((s, b) => s + Number(b.amount || 0), 0) })))
+const monthlySeries = computed(() => {
+  const out = monthOptions.value.map(({ value, label }) => ({
+    value,
+    label: label.split(' ')[0].slice(0, 3).toUpperCase(),
+    total: sortedBills.value.filter((b) => b.dueDate.startsWith(value)).reduce((s, b) => s + Number(b.amount || 0), 0),
+  })).reverse()
+  const max = Math.max(...out.map((m) => m.total), 1)
+  return out.map((m) => ({ ...m, pct: Math.max(Math.round((m.total / max) * 100), m.total > 0 ? 4 : 0) }))
+})
 const nubankBills = computed(() => sortedBills.value.filter((bill) => bill.bankAccount === 'Nubank' && bill.status !== 'paid'))
 const uvvBill = computed(() => sortedBills.value.find((bill) => bill.id === 'demo-uvv'))
 const filteredBills = computed(() => sortedBills.value.filter((bill) => {
@@ -314,10 +376,25 @@ onMounted(() => initAuth(handleSession))
 .source-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }.source-card { border: 1px solid var(--line); background: rgba(255,255,255,.55); border-radius: 18px; padding: 24px; display: grid; grid-template-columns: 45px 1fr; gap: 15px; }.source-card > .q-icon { background: var(--ink); color: var(--acid); padding: 10px; border-radius: 10px; font-size: 24px; }.source-card .mono { font-size: 8px; color: var(--muted); }.source-card h2 { margin: 4px 0; }.source-card p { color: var(--muted); font-size: 11px; }.source-list { grid-column: 1/-1; border-top: 1px solid var(--line); }.source-list div { display: flex; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 11px; }.source-list small { color: var(--muted); text-align: right; }
 .timeline { max-width: 780px; }.timeline article { display: grid; grid-template-columns: 48px 1fr auto; gap: 16px; align-items: start; border-bottom: 1px solid var(--line); padding: 20px 0; }.timeline__dot { width: 42px; height: 42px; border: 1px solid var(--ink); display: grid; place-items: center; border-radius: 50%; }.timeline .mono { font-size: 9px; color: var(--muted); }.timeline h3 { margin: 4px 0; }.timeline p { color: var(--muted); margin: 0; font-size: 11px; }
 .editor-card { width: min(680px, 100vw); border-radius: 22px 0 0 22px !important; display: flex; flex-direction: column; }.editor-head { background: var(--ink); color: white; display: flex; justify-content: space-between; align-items: center; padding: 24px 28px; }.editor-head .mono { color: var(--acid); font-size: 9px; }.editor-head h2 { margin: 4px 0 0; font-size: 25px; }.editor-body { flex: 1; overflow: auto; padding: 26px 28px; background: var(--paper); }.form-section { margin-bottom: 25px; }.form-section > .mono { display: block; font-size: 9px; font-weight: 500; margin-bottom: 12px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.span-2 { grid-column: 1/-1; }.editor-actions { border-top: 1px solid var(--line); padding: 14px 24px; background: white; }
-.auth-card { width: min(440px, 92vw); padding: 16px; }.google-btn { background: var(--ink); color: white; }.auth-divider { text-align: center; font-size: 9px; color: var(--muted); margin: 10px 0 2px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.auth-card { width: min(440px, 92vw); padding: 16px; }.google-btn { background: var(--ink); color: white; }.auth-divider { text-align: center; font-size: 9px; color: var(--muted); margin: 10px 0 2px; }
+.report-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.report-tiles article { background: var(--surface, rgba(255,255,255,.66)); border: 1px solid var(--line); border-radius: 15px; padding: 18px 20px; }.report-tiles .mono { font-size: 9px; color: var(--muted); }.report-tiles strong { display: block; font-size: clamp(20px, 2.6vw, 30px); letter-spacing: -.03em; margin: 8px 0 2px; }.report-tiles small { color: var(--muted); font-size: 10px; }
+.trend-chart { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: end; border-top: 1px solid var(--ink); padding-top: 18px; }
+.trend-col { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; padding: 0; cursor: pointer; color: var(--text); }
+.trend-value { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.trend-bar { display: flex; align-items: flex-end; justify-content: center; height: 120px; width: 100%; }
+.trend-bar i { display: block; width: min(34px, 60%); background: var(--muted); border-radius: 4px 4px 0 0; min-height: 0; transition: height .25s ease; }
+.trend-col.active .trend-bar i { background: var(--acid); box-shadow: inset 0 0 0 1px var(--ink); }
+.trend-col.active .trend-label { color: var(--text); font-weight: 700; }.trend-label { font-size: 9px; color: var(--muted); }
+.cat-list { border-top: 1px solid var(--ink); }
+.cat-row { display: grid; grid-template-columns: minmax(90px, 150px) 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.cat-row b { font-size: 12px; white-space: nowrap; }
+.cat-bar { display: block; height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.cat-bar i { display: block; height: 100%; background: var(--muted); border-radius: 4px; }
+.empty-note { color: var(--muted); font-size: 12px; padding: 14px 0; }
+.account-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }.account-grid article { border: 1px solid var(--line); background: var(--surface, rgba(255,255,255,.55)); border-radius: 15px; padding: 18px 20px; }.account-grid .mono { font-size: 9px; color: var(--muted); }.account-grid strong { display: block; font-size: 22px; margin-top: 8px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .reveal { animation: rise .55s both; }.reveal--2 { animation-delay: .08s; }.reveal--3 { animation-delay: .14s; }.reveal--4 { animation-delay: .2s; }@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 76px 1fr; }.rail { padding-inline: 10px; }.rail-link { grid-template-columns: 1fr; place-items: center; }.rail-link span, .rail-link b, .rail-note { display: none; }.new-bill .q-btn__content span { display: none; }.cards-grid { grid-template-columns: repeat(2,1fr); }.bill-row { grid-template-columns: 55px 1fr 130px 20px; }.bill-method { display: none; } }
-@media (max-width: 720px) { .sync-pill { display: none; }.topbar__inner { padding: 0 15px; }.workspace { display: block; }.rail { position: fixed; z-index: 20; top: auto; bottom: 0; height: 66px; width: 100%; border: 0; border-top: 1px solid var(--line); background: rgba(244,241,232,.95); backdrop-filter: blur(12px); padding: 6px 8px; }.rail nav { display: grid; grid-template-columns: repeat(4,1fr); }.rail-link { padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; font-size: 9px; }.rail-link span { display: block; }.rail-link b, .new-bill { display: none; }.rail-link.active { color: var(--ink); background: var(--acid); }.content { padding: 28px 16px 100px; }.today { display: none; }.page-heading h1 { font-size: 44px; }.hero-grid, .message-preview { grid-template-columns: 1fr; }.fund-card > strong { font-size: 45px; }.bill-row { grid-template-columns: 48px 1fr auto; gap: 10px; }.bill-value .status, .row-arrow { display: none; }.bill-title span, .bill-main small { display: none; }.message-preview { padding: 24px 18px; gap: 35px; }.phone-card { width: 100%; }.cards-grid, .source-grid { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.sub-heading { display: block; }.sub-heading .q-btn { margin-top: 20px; }.form-grid { grid-template-columns: 1fr; }.span-2 { grid-column: auto; }.editor-card { border-radius: 0 !important; }.editor-body { padding: 20px 16px; } }
+@media (max-width: 720px) { .sync-pill { display: none; }.topbar__inner { padding: 0 15px; }.workspace { display: block; }.rail { position: fixed; z-index: 20; top: auto; bottom: 0; height: 66px; width: 100%; border: 0; border-top: 1px solid var(--line); background: rgba(244,241,232,.95); backdrop-filter: blur(12px); padding: 6px 8px; }.rail nav { display: grid; grid-template-columns: repeat(5,1fr); }.rail-link { padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; font-size: 9px; }.rail-link span { display: block; }.rail-link b, .new-bill { display: none; }.rail-link.active { color: var(--ink); background: var(--acid); }.content { padding: 28px 16px 100px; }.today { display: none; }.page-heading h1 { font-size: 44px; }.hero-grid, .message-preview { grid-template-columns: 1fr; }.fund-card > strong { font-size: 45px; }.bill-row { grid-template-columns: 48px 1fr auto; gap: 10px; }.bill-value .status, .row-arrow { display: none; }.bill-title span, .bill-main small { display: none; }.message-preview { padding: 24px 18px; gap: 35px; }.phone-card { width: 100%; }.cards-grid, .source-grid { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.sub-heading { display: block; }.sub-heading .q-btn { margin-top: 20px; }.form-grid { grid-template-columns: 1fr; }.span-2 { grid-column: auto; }.editor-card { border-radius: 0 !important; }.editor-body { padding: 20px 16px; } }
 </style>
 
 <style>
@@ -347,7 +424,7 @@ onMounted(() => initAuth(handleSession))
   border-top: 1px solid var(--line);
   background: var(--canvas);
 }
-.mobile-first-app .rail nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.mobile-first-app .rail nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .mobile-first-app .rail-link {
   min-width: 0;
   min-height: 56px;
@@ -407,7 +484,11 @@ onMounted(() => initAuth(handleSession))
 .mobile-first-app .message-preview,
 .mobile-first-app .cards-grid,
 .mobile-first-app .source-grid,
+.mobile-first-app .report-tiles,
 .mobile-first-app .filters { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.mobile-first-app .trend-value { display: none; }
+.mobile-first-app .trend-col.active .trend-value { display: block; }
+@media (min-width: 640px) { .mobile-first-app .report-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .mobile-first-app .trend-value { display: block; } }
 .mobile-first-app .fund-card,
 .mobile-first-app .action-card,
 .mobile-first-app .message-preview { min-height: auto; padding: 22px 20px; border-radius: 16px; }
