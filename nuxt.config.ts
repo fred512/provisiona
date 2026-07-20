@@ -24,6 +24,9 @@ export default defineNuxtConfig({
         { name: 'theme-color', content: '#17251f' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
       ],
+      link: [
+        { rel: 'apple-touch-icon', href: '/icons/icon-192x192.png' },
+      ],
     },
   },
   pwa: {
