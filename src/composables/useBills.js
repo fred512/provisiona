@@ -64,16 +64,26 @@ export function useBills() {
     await save({ ...bill, status: 'paid' })
   }
 
-  const occurrenceFromTemplate = (tpl, period) => ({
-    id: crypto.randomUUID(), templateId: tpl.id, period,
-    title: tpl.title, category: tpl.category,
-    amount: tpl.nominalAmount ?? null, nominalAmount: tpl.nominalAmount ?? null,
-    dueDate: dueDateForPeriod(period, tpl.dueDay),
-    documentExpectedAt: '', discountUntil: '',
-    payerName: tpl.payerName, sourceChannel: tpl.sourceChannel, sender: tpl.sender,
-    locatorHint: tpl.locatorHint, paymentMethod: tpl.paymentMethod, bankAccount: tpl.bankAccount,
-    status: 'waiting_document', barcode: '', recurring: true,
-  })
+  function lastKnownAmount(templateId) {
+    const history = bills.value
+      .filter((b) => b.templateId === templateId && b.amount !== null && b.amount !== '')
+      .sort((a, b) => (b.period || '').localeCompare(a.period || ''))
+    return history[0]?.amount ?? null
+  }
+
+  const occurrenceFromTemplate = (tpl, period) => {
+    const forecast = tpl.nominalAmount ?? lastKnownAmount(tpl.id)
+    return {
+      id: crypto.randomUUID(), templateId: tpl.id, period,
+      title: tpl.title, category: tpl.category,
+      amount: forecast, nominalAmount: forecast,
+      dueDate: dueDateForPeriod(period, tpl.dueDay),
+      documentExpectedAt: '', discountUntil: '',
+      payerName: tpl.payerName, sourceChannel: tpl.sourceChannel, sender: tpl.sender,
+      locatorHint: tpl.locatorHint, paymentMethod: tpl.paymentMethod, bankAccount: tpl.bankAccount,
+      status: 'waiting_document', barcode: '', recurring: true,
+    }
+  }
 
   const periodOfIdx = (idx) => `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`
 
