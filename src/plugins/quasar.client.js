@@ -3,6 +3,7 @@ import {
   Dialog,
   LocalStorage,
   Notify,
+  QAvatar,
   QBadge,
   QBtn,
   QCard,
@@ -25,6 +26,7 @@ import {
 export default defineNuxtPlugin((nuxtApp) => {
   nuxtApp.vueApp.use(Quasar, {
     components: {
+      QAvatar,
       QBadge,
       QBtn,
       QCard,

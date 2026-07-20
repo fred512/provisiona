@@ -21,7 +21,9 @@
         >
           <q-tooltip>{{ themeMode === 'dark' ? 'Modo claro' : 'Modo escuro' }}</q-tooltip>
         </q-btn>
-        <q-btn round flat :icon="user ? 'how_to_reg' : 'account_circle'" :aria-label="user ? 'Conta conectada' : 'Entrar'" @click="handleSync">
+        <q-btn round flat :aria-label="user ? 'Conta conectada' : 'Entrar'" @click="handleSync">
+          <q-avatar v-if="avatarUrl" size="30px"><img :src="avatarUrl" alt="Foto da conta Google" referrerpolicy="no-referrer"></q-avatar>
+          <q-icon v-else :name="user ? 'how_to_reg' : 'account_circle'" />
           <q-tooltip>{{ user ? user.email : 'Entrar' }}</q-tooltip>
         </q-btn>
       </q-toolbar>
@@ -167,7 +169,7 @@
           <q-card-actions align="right"><q-btn flat label="Cancelar" v-close-popup /><q-btn unelevated color="dark" label="Enviar link" @click="sendMagicLink" /></q-card-actions>
         </template>
         <template v-else>
-          <q-card-section><span class="mono">CONTA CONECTADA</span><h2>{{ user.user_metadata?.full_name || 'Sua conta' }}</h2><p>{{ user.email }} · sincronizando com Supabase.</p></q-card-section>
+          <q-card-section class="account-head"><q-avatar v-if="avatarUrl" size="52px"><img :src="avatarUrl" alt="Foto da conta Google" referrerpolicy="no-referrer"></q-avatar><q-avatar v-else size="52px" icon="how_to_reg" color="dark" text-color="white" /><div><span class="mono">CONTA CONECTADA</span><h2>{{ user.user_metadata?.full_name || 'Sua conta' }}</h2><p>{{ user.email }} · sincronizando com Supabase.</p></div></q-card-section>
           <q-card-actions align="right"><q-btn flat label="Fechar" v-close-popup /><q-btn outline color="negative" label="Sair" @click="logout" /></q-card-actions>
         </template>
       </q-card>
@@ -189,6 +191,7 @@ const themeMode = ref(storedTheme || systemTheme)
 $q.dark.set(themeMode.value === 'dark')
 const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal } = useBills()
 const { user, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
+const avatarUrl = computed(() => user.value?.user_metadata?.avatar_url || user.value?.user_metadata?.picture || '')
 const activeView = ref('dashboard')
 const editorOpen = ref(false)
 const authOpen = ref(false)
@@ -377,6 +380,7 @@ onMounted(() => initAuth(handleSession))
 .timeline { max-width: 780px; }.timeline article { display: grid; grid-template-columns: 48px 1fr auto; gap: 16px; align-items: start; border-bottom: 1px solid var(--line); padding: 20px 0; }.timeline__dot { width: 42px; height: 42px; border: 1px solid var(--ink); display: grid; place-items: center; border-radius: 50%; }.timeline .mono { font-size: 9px; color: var(--muted); }.timeline h3 { margin: 4px 0; }.timeline p { color: var(--muted); margin: 0; font-size: 11px; }
 .editor-card { width: min(680px, 100vw); border-radius: 22px 0 0 22px !important; display: flex; flex-direction: column; }.editor-head { background: var(--ink); color: white; display: flex; justify-content: space-between; align-items: center; padding: 24px 28px; }.editor-head .mono { color: var(--acid); font-size: 9px; }.editor-head h2 { margin: 4px 0 0; font-size: 25px; }.editor-body { flex: 1; overflow: auto; padding: 26px 28px; background: var(--paper); }.form-section { margin-bottom: 25px; }.form-section > .mono { display: block; font-size: 9px; font-weight: 500; margin-bottom: 12px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.span-2 { grid-column: 1/-1; }.editor-actions { border-top: 1px solid var(--line); padding: 14px 24px; background: white; }
 .auth-card { width: min(440px, 92vw); padding: 16px; }.google-btn { background: var(--ink); color: white; }.auth-divider { text-align: center; font-size: 9px; color: var(--muted); margin: 10px 0 2px; }
+.account-head { display: flex; gap: 16px; align-items: center; }.account-head .q-avatar { flex-shrink: 0; }.account-head img { object-fit: cover; }
 .report-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.report-tiles article { background: var(--surface, rgba(255,255,255,.66)); border: 1px solid var(--line); border-radius: 15px; padding: 18px 20px; }.report-tiles .mono { font-size: 9px; color: var(--muted); }.report-tiles strong { display: block; font-size: clamp(20px, 2.6vw, 30px); letter-spacing: -.03em; margin: 8px 0 2px; }.report-tiles small { color: var(--muted); font-size: 10px; }
 .trend-chart { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: end; border-top: 1px solid var(--ink); padding-top: 18px; }
 .trend-col { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; padding: 0; cursor: pointer; color: var(--text); }
