@@ -9,7 +9,7 @@
         </div>
         <q-space />
         <button class="sync-pill" :class="{ 'sync-pill--live': syncMode === 'supabase' }" @click="handleSync">
-          <span></span>{{ syncMode === 'supabase' ? 'Supabase conectado' : 'Modo demonstração' }}
+          <span></span>{{ syncMode === 'supabase' ? `Sincronizado · ${user?.email || ''}` : 'Modo demonstração' }}
         </button>
         <q-btn
           class="theme-toggle"
@@ -21,7 +21,9 @@
         >
           <q-tooltip>{{ themeMode === 'dark' ? 'Modo claro' : 'Modo escuro' }}</q-tooltip>
         </q-btn>
-        <q-btn round flat icon="notifications_none" aria-label="Notificações"><q-badge floating color="negative" rounded /></q-btn>
+        <q-btn round flat :icon="user ? 'how_to_reg' : 'account_circle'" :aria-label="user ? 'Conta conectada' : 'Entrar'" @click="handleSync">
+          <q-tooltip>{{ user ? user.email : 'Entrar' }}</q-tooltip>
+        </q-btn>
       </q-toolbar>
     </q-header>
 
@@ -124,9 +126,19 @@
 
     <q-dialog v-model="authOpen">
       <q-card class="auth-card">
-        <q-card-section><span class="mono">SINCRONIZAÇÃO SEGURA</span><h2>Conectar ao Supabase</h2><p>Enviaremos um link de acesso para seu e-mail. Nenhuma senha bancária é armazenada.</p></q-card-section>
-        <q-card-section><q-input v-model="authEmail" outlined type="email" label="Seu e-mail" autofocus /></q-card-section>
-        <q-card-actions align="right"><q-btn flat label="Cancelar" v-close-popup /><q-btn unelevated color="dark" label="Enviar link" @click="sendMagicLink" /></q-card-actions>
+        <template v-if="!user">
+          <q-card-section><span class="mono">SINCRONIZAÇÃO SEGURA</span><h2>Entrar no Provisiona</h2><p>Seus compromissos ficam protegidos por usuário (RLS). Nenhuma senha bancária é armazenada.</p></q-card-section>
+          <q-card-section class="q-gutter-y-sm">
+            <q-btn class="google-btn full-width" unelevated icon="login" label="Entrar com Google" :loading="authBusy" @click="loginGoogle" />
+            <div class="auth-divider mono">OU RECEBA UM LINK POR E-MAIL</div>
+            <q-input v-model="authEmail" outlined type="email" label="Seu e-mail" @keyup.enter="sendMagicLink" />
+          </q-card-section>
+          <q-card-actions align="right"><q-btn flat label="Cancelar" v-close-popup /><q-btn unelevated color="dark" label="Enviar link" @click="sendMagicLink" /></q-card-actions>
+        </template>
+        <template v-else>
+          <q-card-section><span class="mono">CONTA CONECTADA</span><h2>{{ user.user_metadata?.full_name || 'Sua conta' }}</h2><p>{{ user.email }} · sincronizando com Supabase.</p></q-card-section>
+          <q-card-actions align="right"><q-btn flat label="Fechar" v-close-popup /><q-btn outline color="negative" label="Sair" @click="logout" /></q-card-actions>
+        </template>
       </q-card>
     </q-dialog>
   </q-layout>
@@ -136,6 +148,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { copyToClipboard, useQuasar } from 'quasar'
 import { useBills } from './composables/useBills'
+import { useAuth } from './composables/useAuth'
 
 const $q = useQuasar()
 const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
@@ -143,11 +156,13 @@ const storedTheme = window.localStorage.getItem('provisiona:theme')
 const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 const themeMode = ref(storedTheme || systemTheme)
 $q.dark.set(themeMode.value === 'dark')
-const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, load, save } = useBills()
+const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal } = useBills()
+const { user, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
 const activeView = ref('dashboard')
 const editorOpen = ref(false)
 const authOpen = ref(false)
 const authEmail = ref('')
+const authBusy = ref(false)
 const search = ref('')
 const statusFilter = ref('all')
 const blankBill = () => ({ title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true })
@@ -196,10 +211,53 @@ function toggleTheme() {
 }
 async function sendMagicLink() {
   if (!authEmail.value) return
-  const { error } = await supabase.auth.signInWithOtp({ email: authEmail.value, options: { emailRedirectTo: window.location.origin } })
-  if (error) return $q.notify({ type: 'negative', message: error.message })
+  try {
+    await signInWithEmail(authEmail.value)
+    authOpen.value = false
+    $q.notify({ color: 'dark', icon: 'mark_email_read', message: 'Link de acesso enviado.' })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+  }
+}
+
+async function loginGoogle() {
+  authBusy.value = true
+  try {
+    await signInWithGoogle()
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+    authBusy.value = false
+  }
+}
+
+async function logout() {
+  try {
+    await signOut()
+    goLocal()
+    authOpen.value = false
+    $q.notify({ color: 'dark', icon: 'logout', message: 'Sessão encerrada. Modo local ativo.' })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+  }
+}
+
+async function handleSession() {
+  const { count, error } = await supabase.from('bills').select('id', { count: 'exact', head: true })
+  if (error) return $q.notify({ type: 'warning', message: `Supabase: ${error.message}` })
+  if (count === 0 && hasRealLocalBills.value) {
+    $q.dialog({
+      title: 'Importar dados locais?',
+      message: 'Sua conta está vazia. Enviar os compromissos criados neste aparelho para o Supabase?',
+      ok: { label: 'Importar', color: 'dark', unelevated: true },
+      cancel: { label: 'Começar do zero', flat: true },
+      persistent: true,
+    })
+      .onOk(() => pushLocal().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+      .onCancel(() => load().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+  } else {
+    await load().catch((e) => $q.notify({ type: 'negative', message: e.message }))
+  }
   authOpen.value = false
-  $q.notify({ color: 'dark', icon: 'mark_email_read', message: 'Link de acesso enviado.' })
 }
 const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0)
 const formatDate = (value) => value ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)) : '—'
@@ -207,7 +265,7 @@ const day = (value) => value.slice(8, 10)
 const month = (value) => new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)).replace('.', '').toUpperCase()
 const statusLabel = (status) => ({ waiting_document: 'Aguardando', document_found: 'Localizado', scheduled: 'Agendado', paid: 'Pago' }[status] || status)
 const sourceIcon = (source) => ({ Gmail: 'mail', WhatsApp: 'chat', 'DDA Nubank': 'account_balance', Portal: 'language', Aplicativo: 'apps' }[source] || 'folder')
-onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `Supabase: ${error.message}` })))
+onMounted(() => initAuth(handleSession))
 </script>
 
 <style scoped>
@@ -233,7 +291,7 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
 .source-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }.source-card { border: 1px solid var(--line); background: rgba(255,255,255,.55); border-radius: 18px; padding: 24px; display: grid; grid-template-columns: 45px 1fr; gap: 15px; }.source-card > .q-icon { background: var(--ink); color: var(--acid); padding: 10px; border-radius: 10px; font-size: 24px; }.source-card .mono { font-size: 8px; color: var(--muted); }.source-card h2 { margin: 4px 0; }.source-card p { color: var(--muted); font-size: 11px; }.source-list { grid-column: 1/-1; border-top: 1px solid var(--line); }.source-list div { display: flex; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 11px; }.source-list small { color: var(--muted); text-align: right; }
 .timeline { max-width: 780px; }.timeline article { display: grid; grid-template-columns: 48px 1fr auto; gap: 16px; align-items: start; border-bottom: 1px solid var(--line); padding: 20px 0; }.timeline__dot { width: 42px; height: 42px; border: 1px solid var(--ink); display: grid; place-items: center; border-radius: 50%; }.timeline .mono { font-size: 9px; color: var(--muted); }.timeline h3 { margin: 4px 0; }.timeline p { color: var(--muted); margin: 0; font-size: 11px; }
 .editor-card { width: min(680px, 100vw); border-radius: 22px 0 0 22px !important; display: flex; flex-direction: column; }.editor-head { background: var(--ink); color: white; display: flex; justify-content: space-between; align-items: center; padding: 24px 28px; }.editor-head .mono { color: var(--acid); font-size: 9px; }.editor-head h2 { margin: 4px 0 0; font-size: 25px; }.editor-body { flex: 1; overflow: auto; padding: 26px 28px; background: var(--paper); }.form-section { margin-bottom: 25px; }.form-section > .mono { display: block; font-size: 9px; font-weight: 500; margin-bottom: 12px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.span-2 { grid-column: 1/-1; }.editor-actions { border-top: 1px solid var(--line); padding: 14px 24px; background: white; }
-.auth-card { width: min(440px, 92vw); padding: 16px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.auth-card { width: min(440px, 92vw); padding: 16px; }.google-btn { background: var(--ink); color: white; }.auth-divider { text-align: center; font-size: 9px; color: var(--muted); margin: 10px 0 2px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .reveal { animation: rise .55s both; }.reveal--2 { animation-delay: .08s; }.reveal--3 { animation-delay: .14s; }.reveal--4 { animation-delay: .2s; }@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 76px 1fr; }.rail { padding-inline: 10px; }.rail-link { grid-template-columns: 1fr; place-items: center; }.rail-link span, .rail-link b, .rail-note { display: none; }.new-bill .q-btn__content span { display: none; }.cards-grid { grid-template-columns: repeat(2,1fr); }.bill-row { grid-template-columns: 55px 1fr 130px 20px; }.bill-method { display: none; } }
 @media (max-width: 720px) { .sync-pill { display: none; }.topbar__inner { padding: 0 15px; }.workspace { display: block; }.rail { position: fixed; z-index: 20; top: auto; bottom: 0; height: 66px; width: 100%; border: 0; border-top: 1px solid var(--line); background: rgba(244,241,232,.95); backdrop-filter: blur(12px); padding: 6px 8px; }.rail nav { display: grid; grid-template-columns: repeat(4,1fr); }.rail-link { padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; font-size: 9px; }.rail-link span { display: block; }.rail-link b, .new-bill { display: none; }.rail-link.active { color: var(--ink); background: var(--acid); }.content { padding: 28px 16px 100px; }.today { display: none; }.page-heading h1 { font-size: 44px; }.hero-grid, .message-preview { grid-template-columns: 1fr; }.fund-card > strong { font-size: 45px; }.bill-row { grid-template-columns: 48px 1fr auto; gap: 10px; }.bill-value .status, .row-arrow { display: none; }.bill-title span, .bill-main small { display: none; }.message-preview { padding: 24px 18px; gap: 35px; }.phone-card { width: 100%; }.cards-grid, .source-grid { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.sub-heading { display: block; }.sub-heading .q-btn { margin-top: 20px; }.form-grid { grid-template-columns: 1fr; }.span-2 { grid-column: auto; }.editor-card { border-radius: 0 !important; }.editor-body { padding: 20px 16px; } }
