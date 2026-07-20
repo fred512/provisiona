@@ -9,7 +9,7 @@
         </div>
         <q-space />
         <button class="sync-pill" :class="{ 'sync-pill--live': syncMode === 'supabase' }" @click="handleSync">
-          <span></span>{{ syncMode === 'supabase' ? 'Supabase conectado' : 'Modo demonstração' }}
+          <span></span>{{ syncMode === 'supabase' ? `Sincronizado · ${user?.email || ''}` : 'Modo demonstração' }}
         </button>
         <q-btn
           class="theme-toggle"
@@ -21,7 +21,9 @@
         >
           <q-tooltip>{{ themeMode === 'dark' ? 'Modo claro' : 'Modo escuro' }}</q-tooltip>
         </q-btn>
-        <q-btn round flat icon="notifications_none" aria-label="Notificações"><q-badge floating color="negative" rounded /></q-btn>
+        <q-btn round flat :icon="user ? 'how_to_reg' : 'account_circle'" :aria-label="user ? 'Conta conectada' : 'Entrar'" @click="handleSync">
+          <q-tooltip>{{ user ? user.email : 'Entrar' }}</q-tooltip>
+        </q-btn>
       </q-toolbar>
     </q-header>
 
@@ -77,7 +79,8 @@
                   <div class="bill-main"><div class="bill-title"><strong>{{ bill.title }}</strong><span>{{ bill.category }}</span></div><small><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }} · {{ bill.sender }}</small></div>
                   <div class="bill-method"><span>{{ bill.paymentMethod }}</span><small>{{ bill.bankAccount }}</small></div>
                   <div class="bill-value"><strong>{{ money(bill.amount) }}</strong><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span></div>
-                  <q-icon name="chevron_right" class="row-arrow" />
+                  <q-btn v-if="bill.status !== 'paid'" class="row-pay" round flat icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn>
+                  <q-icon v-else name="chevron_right" class="row-arrow" />
                 </article>
               </div>
             </section>
@@ -94,7 +97,37 @@
           <template v-else-if="activeView === 'bills'">
             <header class="sub-heading"><div><span class="eyebrow mono">CONTAS A PAGAR</span><h1>Todos os compromissos</h1></div><q-btn unelevated icon="add" label="Nova despesa" @click="openEditor()" /></header>
             <div class="filters"><q-input v-model="search" outlined dense clearable placeholder="Buscar despesa ou remetente"><template #prepend><q-icon name="search" /></template></q-input><q-select v-model="statusFilter" outlined dense :options="statusOptions" emit-value map-options /></div>
-            <div class="cards-grid"><article v-for="bill in filteredBills" :key="bill.id" class="compact-card" @click="openEditor(bill)"><div class="compact-card__top"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span><span class="mono">{{ formatDate(bill.dueDate) }}</span></div><h3>{{ bill.title }}</h3><strong>{{ money(bill.amount) }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }}</span><span>{{ bill.bankAccount }}</span></div></article></div>
+            <div class="cards-grid"><article v-for="bill in filteredBills" :key="bill.id" class="compact-card" @click="openEditor(bill)"><div class="compact-card__top"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span><span class="mono">{{ formatDate(bill.dueDate) }}</span><q-btn v-if="bill.status !== 'paid'" dense round flat size="sm" icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn></div><h3>{{ bill.title }}</h3><strong>{{ money(bill.amount) }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }}</span><span>{{ bill.bankAccount }}</span></div></article></div>
+          </template>
+
+          <template v-else-if="activeView === 'report'">
+            <header class="sub-heading"><div><span class="eyebrow mono">RELATÓRIO</span><h1>Análise de gastos</h1></div><q-select v-model="reportMonth" outlined dense :options="monthOptions" emit-value map-options /></header>
+            <section class="report-tiles">
+              <article><span class="mono">TOTAL DO MÊS</span><strong>{{ money(monthTotal) }}</strong><small>{{ monthBills.length }} compromisso{{ monthBills.length === 1 ? '' : 's' }}</small></article>
+              <article><span class="mono">PAGO</span><strong>{{ money(monthPaid) }}</strong><small>{{ Math.round(monthTotal ? (monthPaid / monthTotal) * 100 : 0) }}% executado</small></article>
+              <article><span class="mono">EM ABERTO</span><strong>{{ money(monthTotal - monthPaid) }}</strong><small>a provisionar</small></article>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">LINHA DO TEMPO · 6 MESES</span><h2>Evolução</h2></div></div>
+              <div class="trend-chart" role="img" aria-label="Total de despesas por mês na janela de seis meses">
+                <button v-for="m in monthlySeries" :key="m.value" class="trend-col" :class="{ active: m.value === reportMonth }" :title="`${m.label} · ${money(m.total)}`" @click="reportMonth = m.value">
+                  <span class="trend-value mono">{{ m.total ? money(m.total) : '—' }}</span>
+                  <span class="trend-bar"><i :style="{ height: m.pct + '%' }"></i></span>
+                  <span class="trend-label mono">{{ m.label }}</span>
+                </button>
+              </div>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">POR CATEGORIA</span><h2>Onde o dinheiro vai</h2></div></div>
+              <div class="cat-list">
+                <div v-for="cat in byCategory" :key="cat.name" class="cat-row"><span>{{ cat.name }}</span><span class="cat-bar"><i :style="{ width: cat.pct + '%' }"></i></span><b>{{ money(cat.total) }}</b></div>
+                <p v-if="!byCategory.length" class="empty-note">Sem despesas neste mês.</p>
+              </div>
+            </section>
+            <section class="section-block">
+              <div class="section-title"><div><span class="mono">POR CONTA PAGADORA</span><h2>Saída por banco</h2></div></div>
+              <div class="account-grid"><article v-for="acc in byAccount" :key="acc.name"><span class="mono">{{ acc.name.toUpperCase() }}</span><strong>{{ money(acc.total) }}</strong></article></div>
+            </section>
           </template>
 
           <template v-else-if="activeView === 'sources'">
@@ -114,19 +147,29 @@
       <q-card class="editor-card">
         <q-card-section class="editor-head"><div><span class="mono">{{ draft.id ? 'EDITAR COMPROMISSO' : 'NOVO COMPROMISSO' }}</span><h2>{{ draft.id ? draft.title : 'Cadastrar despesa' }}</h2></div><q-btn round flat icon="close" v-close-popup /></q-card-section>
         <q-card-section class="editor-body q-gutter-y-md">
-          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" /><q-input v-model.number="draft.amount" outlined type="number" step="0.01" prefix="R$" label="Valor para pagamento" /><q-input v-model.number="draft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor nominal" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
+          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" /><q-input v-model.number="draft.amount" outlined type="number" step="0.01" prefix="R$" label="Valor para pagamento" lazy-rules :rules="[v => (v !== null && v !== '' && Number(v) >= 0) || 'Informe um valor válido']" /><q-input v-model.number="draft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor nominal" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label lazy-rules :rules="[v => !!v || 'Informe o vencimento']" /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
           <div class="form-section"><span class="mono">02 · ONDE LOCALIZAR</span><div class="form-grid"><q-select v-model="draft.sourceChannel" outlined label="Fonte" :options="sourceOptions" /><q-input v-model="draft.sender" outlined label="Remetente esperado" /><q-input v-model="draft.locatorHint" outlined label="Assunto, contato ou regra de busca" class="span-2" /></div></div>
           <div class="form-section"><span class="mono">03 · EXECUÇÃO</span><div class="form-grid"><q-select v-model="draft.paymentMethod" outlined label="Forma de pagamento" :options="paymentOptions" /><q-select v-model="draft.bankAccount" outlined label="Conta pagadora" :options="['Nubank', 'CAIXA']" /><q-select v-model="draft.status" outlined label="Situação" :options="statusOptions" emit-value map-options /><q-input v-model="draft.documentExpectedAt" outlined type="date" label="Documento esperado" stack-label /><q-input v-model="draft.barcode" outlined autogrow label="Linha digitável" class="span-2"><template #append><q-btn v-if="draft.barcode" flat round icon="content_copy" @click="copy(draft.barcode)" /></template></q-input></div></div>
         </q-card-section>
-        <q-card-actions class="editor-actions"><q-btn flat label="Cancelar" v-close-popup /><q-space /><q-btn unelevated color="dark" label="Salvar compromisso" icon-right="arrow_forward" @click="saveDraft" /></q-card-actions>
+        <q-card-actions class="editor-actions"><q-btn v-if="draft.id" flat color="negative" icon="delete_outline" label="Excluir" @click="confirmRemove" /><q-btn flat label="Cancelar" v-close-popup /><q-space /><q-btn unelevated color="dark" label="Salvar compromisso" icon-right="arrow_forward" @click="saveDraft" /></q-card-actions>
       </q-card>
     </q-dialog>
 
     <q-dialog v-model="authOpen">
       <q-card class="auth-card">
-        <q-card-section><span class="mono">SINCRONIZAÇÃO SEGURA</span><h2>Conectar ao Supabase</h2><p>Enviaremos um link de acesso para seu e-mail. Nenhuma senha bancária é armazenada.</p></q-card-section>
-        <q-card-section><q-input v-model="authEmail" outlined type="email" label="Seu e-mail" autofocus /></q-card-section>
-        <q-card-actions align="right"><q-btn flat label="Cancelar" v-close-popup /><q-btn unelevated color="dark" label="Enviar link" @click="sendMagicLink" /></q-card-actions>
+        <template v-if="!user">
+          <q-card-section><span class="mono">SINCRONIZAÇÃO SEGURA</span><h2>Entrar no Provisiona</h2><p>Seus compromissos ficam protegidos por usuário (RLS). Nenhuma senha bancária é armazenada.</p></q-card-section>
+          <q-card-section class="q-gutter-y-sm">
+            <q-btn class="google-btn full-width" unelevated icon="login" label="Entrar com Google" :loading="authBusy" @click="loginGoogle" />
+            <div class="auth-divider mono">OU RECEBA UM LINK POR E-MAIL</div>
+            <q-input v-model="authEmail" outlined type="email" label="Seu e-mail" @keyup.enter="sendMagicLink" />
+          </q-card-section>
+          <q-card-actions align="right"><q-btn flat label="Cancelar" v-close-popup /><q-btn unelevated color="dark" label="Enviar link" @click="sendMagicLink" /></q-card-actions>
+        </template>
+        <template v-else>
+          <q-card-section><span class="mono">CONTA CONECTADA</span><h2>{{ user.user_metadata?.full_name || 'Sua conta' }}</h2><p>{{ user.email }} · sincronizando com Supabase.</p></q-card-section>
+          <q-card-actions align="right"><q-btn flat label="Fechar" v-close-popup /><q-btn outline color="negative" label="Sair" @click="logout" /></q-card-actions>
+        </template>
       </q-card>
     </q-dialog>
   </q-layout>
@@ -136,6 +179,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { copyToClipboard, useQuasar } from 'quasar'
 import { useBills } from './composables/useBills'
+import { useAuth } from './composables/useAuth'
 
 const $q = useQuasar()
 const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
@@ -143,11 +187,13 @@ const storedTheme = window.localStorage.getItem('provisiona:theme')
 const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 const themeMode = ref(storedTheme || systemTheme)
 $q.dark.set(themeMode.value === 'dark')
-const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, load, save } = useBills()
+const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal } = useBills()
+const { user, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
 const activeView = ref('dashboard')
 const editorOpen = ref(false)
 const authOpen = ref(false)
 const authEmail = ref('')
+const authBusy = ref(false)
 const search = ref('')
 const statusFilter = ref('all')
 const blankBill = () => ({ title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true })
@@ -159,9 +205,41 @@ const statusOptions = [{ label: 'Todos os status', value: 'all' }, { label: 'Agu
 const nav = computed(() => [
   { id: 'dashboard', label: 'Visão geral', icon: 'space_dashboard' },
   { id: 'bills', label: 'Contas a pagar', icon: 'receipt_long', count: sortedBills.value.length },
+  { id: 'report', label: 'Relatório', icon: 'insights' },
   { id: 'sources', label: 'Fontes', icon: 'alternate_email', count: waitingDocuments.value },
   { id: 'alerts', label: 'Alertas', icon: 'forum', count: scheduled.value },
 ])
+
+const reportMonth = ref(new Date().toISOString().slice(0, 7))
+const monthOptions = computed(() => {
+  const out = []
+  const now = new Date()
+  for (const offset of [2, 1, 0, -1, -2, -3]) {
+    const d = new Date(Date.UTC(now.getFullYear(), now.getMonth() + offset, 1))
+    const value = d.toISOString().slice(0, 7)
+    out.push({ value, label: new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) })
+  }
+  return out
+})
+const monthBills = computed(() => sortedBills.value.filter((bill) => bill.dueDate.startsWith(reportMonth.value)))
+const monthTotal = computed(() => monthBills.value.reduce((sum, bill) => sum + Number(bill.amount || 0), 0))
+const monthPaid = computed(() => monthBills.value.filter((b) => b.status === 'paid').reduce((s, b) => s + Number(b.amount || 0), 0))
+const byCategory = computed(() => {
+  const map = {}
+  for (const bill of monthBills.value) map[bill.category] = (map[bill.category] || 0) + Number(bill.amount || 0)
+  const max = Math.max(...Object.values(map), 1)
+  return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, total]) => ({ name, total, pct: Math.round((total / max) * 100) }))
+})
+const byAccount = computed(() => ['Nubank', 'CAIXA'].map((name) => ({ name, total: monthBills.value.filter((b) => b.bankAccount === name).reduce((s, b) => s + Number(b.amount || 0), 0) })))
+const monthlySeries = computed(() => {
+  const out = monthOptions.value.map(({ value, label }) => ({
+    value,
+    label: label.split(' ')[0].slice(0, 3).toUpperCase(),
+    total: sortedBills.value.filter((b) => b.dueDate.startsWith(value)).reduce((s, b) => s + Number(b.amount || 0), 0),
+  })).reverse()
+  const max = Math.max(...out.map((m) => m.total), 1)
+  return out.map((m) => ({ ...m, pct: Math.max(Math.round((m.total / max) * 100), m.total > 0 ? 4 : 0) }))
+})
 const nubankBills = computed(() => sortedBills.value.filter((bill) => bill.bankAccount === 'Nubank' && bill.status !== 'paid'))
 const uvvBill = computed(() => sortedBills.value.find((bill) => bill.id === 'demo-uvv'))
 const filteredBills = computed(() => sortedBills.value.filter((bill) => {
@@ -177,11 +255,33 @@ const alerts = reactive([
   { when: 'D+1 · 10:00', title: 'Cobrar confirmação', text: 'Só envia se a despesa ainda estiver pendente.', icon: 'notification_important', enabled: false },
 ])
 
-function openEditor(bill) { Object.assign(draft, blankBill(), bill ? structuredClone(bill) : {}); editorOpen.value = true }
+function openEditor(bill) { Object.assign(draft, blankBill(), bill ? { ...bill } : {}); editorOpen.value = true }
 async function saveDraft() {
-  if (!draft.title || !draft.amount || !draft.dueDate) return $q.notify({ type: 'warning', message: 'Preencha nome, valor e vencimento.' })
-  try { await save(structuredClone(draft)); editorOpen.value = false; $q.notify({ color: 'dark', textColor: 'white', icon: 'done', message: 'Compromisso salvo.' }) }
+  const title = (draft.title || '').trim()
+  if (title.length < 2 || title.length > 120) return $q.notify({ type: 'warning', message: 'Nome deve ter entre 2 e 120 caracteres.' })
+  if (draft.amount === null || draft.amount === '' || Number(draft.amount) < 0) return $q.notify({ type: 'warning', message: 'Informe um valor válido.' })
+  if (!draft.dueDate) return $q.notify({ type: 'warning', message: 'Informe o vencimento.' })
+  try { await save({ ...draft, title }); editorOpen.value = false; $q.notify({ color: 'dark', textColor: 'white', icon: 'done', message: 'Compromisso salvo.' }) }
   catch (error) { $q.notify({ type: 'negative', message: error.message }) }
+}
+
+function confirmRemove() {
+  $q.dialog({
+    title: 'Excluir compromisso?',
+    message: `"${draft.title}" será removido${syncMode.value === 'supabase' ? ' também do Supabase' : ''}.`,
+    ok: { label: 'Excluir', color: 'negative', unelevated: true },
+    cancel: { label: 'Manter', flat: true },
+  }).onOk(async () => {
+    try { await remove(draft.id); editorOpen.value = false; $q.notify({ color: 'dark', icon: 'delete', message: 'Compromisso excluído.' }) }
+    catch (error) { $q.notify({ type: 'negative', message: error.message }) }
+  })
+}
+
+async function payBill(bill) {
+  try {
+    const { next } = await markPaid(bill.id)
+    $q.notify({ color: 'dark', textColor: 'white', icon: 'task_alt', message: next ? `Paga! Próxima gerada para ${formatDate(next.dueDate)}.` : 'Marcada como paga.' })
+  } catch (error) { $q.notify({ type: 'negative', message: error.message }) }
 }
 function copy(value) { copyToClipboard(value).then(() => $q.notify({ color: 'dark', message: 'Código copiado.', icon: 'content_copy' })) }
 function copyDemoBarcode() { if (uvvBill.value?.barcode) copy(uvvBill.value.barcode) }
@@ -196,10 +296,53 @@ function toggleTheme() {
 }
 async function sendMagicLink() {
   if (!authEmail.value) return
-  const { error } = await supabase.auth.signInWithOtp({ email: authEmail.value, options: { emailRedirectTo: window.location.origin } })
-  if (error) return $q.notify({ type: 'negative', message: error.message })
+  try {
+    await signInWithEmail(authEmail.value)
+    authOpen.value = false
+    $q.notify({ color: 'dark', icon: 'mark_email_read', message: 'Link de acesso enviado.' })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+  }
+}
+
+async function loginGoogle() {
+  authBusy.value = true
+  try {
+    await signInWithGoogle()
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+    authBusy.value = false
+  }
+}
+
+async function logout() {
+  try {
+    await signOut()
+    goLocal()
+    authOpen.value = false
+    $q.notify({ color: 'dark', icon: 'logout', message: 'Sessão encerrada. Modo local ativo.' })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: error.message })
+  }
+}
+
+async function handleSession() {
+  const { count, error } = await supabase.from('bills').select('id', { count: 'exact', head: true })
+  if (error) return $q.notify({ type: 'warning', message: `Supabase: ${error.message}` })
+  if (count === 0 && hasRealLocalBills.value) {
+    $q.dialog({
+      title: 'Importar dados locais?',
+      message: 'Sua conta está vazia. Enviar os compromissos criados neste aparelho para o Supabase?',
+      ok: { label: 'Importar', color: 'dark', unelevated: true },
+      cancel: { label: 'Começar do zero', flat: true },
+      persistent: true,
+    })
+      .onOk(() => pushLocal().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+      .onCancel(() => load().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+  } else {
+    await load().catch((e) => $q.notify({ type: 'negative', message: e.message }))
+  }
   authOpen.value = false
-  $q.notify({ color: 'dark', icon: 'mark_email_read', message: 'Link de acesso enviado.' })
 }
 const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0)
 const formatDate = (value) => value ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)) : '—'
@@ -207,7 +350,7 @@ const day = (value) => value.slice(8, 10)
 const month = (value) => new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)).replace('.', '').toUpperCase()
 const statusLabel = (status) => ({ waiting_document: 'Aguardando', document_found: 'Localizado', scheduled: 'Agendado', paid: 'Pago' }[status] || status)
 const sourceIcon = (source) => ({ Gmail: 'mail', WhatsApp: 'chat', 'DDA Nubank': 'account_balance', Portal: 'language', Aplicativo: 'apps' }[source] || 'folder')
-onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `Supabase: ${error.message}` })))
+onMounted(() => initAuth(handleSession))
 </script>
 
 <style scoped>
@@ -227,16 +370,31 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
 .page-heading, .sub-heading { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 34px; }.eyebrow { font-size: 10px; color: var(--muted); letter-spacing: .12em; }.page-heading h1, .sub-heading h1 { margin: 10px 0 0; font-size: clamp(38px, 5vw, 68px); line-height: .98; letter-spacing: -.055em; }.page-heading h1 em { font-family: Georgia, serif; font-weight: 400; color: #526059; }.today { border-left: 2px solid var(--ink); padding-left: 13px; font-size: 9px; color: var(--muted); }.today b { font-size: 16px; color: var(--ink); }
 .hero-grid { display: grid; grid-template-columns: 1.45fr .85fr; gap: 18px; }.fund-card, .action-card { border-radius: 20px; padding: 27px; min-height: 245px; }.fund-card { background: var(--ink); color: white; }.fund-card__top { display: flex; justify-content: space-between; color: #b9c2bd; font: 10px 'DM Mono'; letter-spacing: .08em; }.fund-card > strong { font-size: clamp(42px, 6vw, 74px); letter-spacing: -.06em; display: block; margin-top: 21px; }.fund-card > p { color: #aeb8b3; font-size: 12px; }.fund-progress { height: 5px; background: rgba(255,255,255,.13); margin: 24px 0 14px; }.fund-progress span { display: block; background: var(--acid); height: 100%; }.fund-meta { display: flex; justify-content: space-between; font-size: 10px; color: #aeb8b3; }.fund-meta b { display: block; color: white; margin-top: 4px; font-size: 13px; }
 .action-card { background: var(--peach); position: relative; overflow: hidden; }.action-card::after { content: ''; position: absolute; width: 130px; height: 130px; border: 1px solid rgba(23,37,31,.3); border-radius: 50%; right: -45px; top: -45px; box-shadow: 0 0 0 25px rgba(23,37,31,.04), 0 0 0 50px rgba(23,37,31,.03); }.action-card > span { font: 10px 'DM Mono'; }.action-card > .q-icon { position: absolute; right: 25px; top: 26px; font-size: 30px; }.action-card h2 { font-size: 24px; line-height: 1.15; margin: 45px 0 10px; max-width: 320px; }.action-card p { font-size: 11px; line-height: 1.5; max-width: 300px; }.action-card button { border: 0; border-bottom: 1px solid; background: transparent; padding: 5px 0; font-weight: 800; cursor: pointer; }
-.section-block { margin-top: 44px; }.section-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 15px; }.section-title span { font-size: 9px; color: var(--muted); }.section-title h2 { margin: 4px 0 0; font-size: 25px; }.bill-list { border-top: 1px solid var(--ink); }.bill-row { display: grid; grid-template-columns: 58px minmax(220px,1fr) 130px 145px 20px; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); padding: 15px 4px; cursor: pointer; transition: .2s ease; }.bill-row:hover { background: rgba(255,255,255,.55); padding-left: 10px; }.date-tile { background: white; border: 1px solid var(--line); padding: 7px; text-align: center; }.date-tile b { font-size: 19px; display: block; line-height: 1; }.date-tile span { font: 9px 'DM Mono'; }.bill-title { display: flex; gap: 10px; align-items: baseline; }.bill-title strong { font-size: 15px; }.bill-title span { color: var(--muted); font-size: 10px; }.bill-main small { color: var(--muted); font-size: 10px; }.bill-method span, .bill-method small { display: block; font-size: 11px; }.bill-method small { color: var(--muted); }.bill-value { text-align: right; }.bill-value strong { display: block; font-size: 15px; }.status { display: inline-flex; margin-top: 5px; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; background: #e5e2d9; border-radius: 4px; }.status--document_found { background: #dff0c5; }.status--scheduled { background: #d7e9f2; }.status--paid { background: var(--acid); }.status--waiting_document { background: #f4d3bd; }.row-arrow { color: var(--muted); }
+.section-block { margin-top: 44px; }.section-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 15px; }.section-title span { font-size: 9px; color: var(--muted); }.section-title h2 { margin: 4px 0 0; font-size: 25px; }.bill-list { border-top: 1px solid var(--ink); }.bill-row { display: grid; grid-template-columns: 58px minmax(220px,1fr) 130px 145px 20px; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); padding: 15px 4px; cursor: pointer; transition: .2s ease; }.bill-row:hover { background: rgba(255,255,255,.55); padding-left: 10px; }.date-tile { background: white; border: 1px solid var(--line); padding: 7px; text-align: center; }.date-tile b { font-size: 19px; display: block; line-height: 1; }.date-tile span { font: 9px 'DM Mono'; }.bill-title { display: flex; gap: 10px; align-items: baseline; }.bill-title strong { font-size: 15px; }.bill-title span { color: var(--muted); font-size: 10px; }.bill-main small { color: var(--muted); font-size: 10px; }.bill-method span, .bill-method small { display: block; font-size: 11px; }.bill-method small { color: var(--muted); }.bill-value { text-align: right; }.bill-value strong { display: block; font-size: 15px; }.status { display: inline-flex; margin-top: 5px; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; background: #e5e2d9; border-radius: 4px; }.status--document_found { background: #dff0c5; }.status--scheduled { background: #d7e9f2; }.status--paid { background: var(--acid); }.status--waiting_document { background: #f4d3bd; }.row-arrow { color: var(--muted); }.row-pay { color: var(--muted); }.row-pay:hover { color: var(--ink); }
 .message-preview { margin-top: 55px; background: #dbe4dd; padding: 35px; border-radius: 22px; display: grid; grid-template-columns: .9fr 1fr; gap: 55px; align-items: center; }.phone-card { background: #efece4; border: 7px solid var(--ink); border-radius: 25px; padding: 18px; max-width: 350px; box-shadow: 11px 12px 0 rgba(23,37,31,.16); transform: rotate(-1deg); }.phone-card__head { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 12px; }.phone-card__head > .q-icon { background: #25d366; border-radius: 50%; color: white; padding: 7px; }.phone-card__head strong, .phone-card__head span { display: block; font-size: 11px; }.phone-card__head span { color: var(--muted); font-size: 8px; }.chat-bubble { margin: 18px 0 4px 20px; background: #d8fdd2; padding: 14px; border-radius: 10px 2px 10px 10px; font-size: 11px; line-height: 1.45; }.chat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 12px; }.chat-actions button { border: 1px solid #7baf77; background: transparent; border-radius: 5px; font-size: 9px; padding: 7px; cursor: pointer; }.message-copy > span { font-size: 9px; }.message-copy h2 { font-family: Georgia, serif; font-size: 40px; line-height: 1; margin: 10px 0 15px; font-weight: 400; }.message-copy p { font-size: 12px; line-height: 1.7; max-width: 480px; }.message-stats { display: flex; gap: 25px; margin-top: 25px; }.message-stats div { border-left: 1px solid; padding-left: 10px; }.message-stats b, .message-stats span { display: block; }.message-stats b { font: 14px 'DM Mono'; }.message-stats span { font-size: 9px; color: var(--muted); }
 .sub-heading { align-items: end; }.sub-heading h1 { font-size: clamp(34px, 4vw, 54px); }.sub-heading .q-btn { background: var(--acid); color: var(--ink); font-weight: 800; }.filters { display: grid; grid-template-columns: minmax(240px,1fr) 240px; gap: 12px; margin-bottom: 24px; }.cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.compact-card { background: rgba(255,255,255,.66); border: 1px solid var(--line); padding: 20px; border-radius: 15px; cursor: pointer; min-height: 190px; transition: .2s ease; }.compact-card:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(23,37,31,.09); }.compact-card__top, .compact-card__footer { display: flex; justify-content: space-between; align-items: center; }.compact-card__top .mono { font-size: 9px; }.compact-card h3 { margin: 26px 0 3px; font-size: 17px; }.compact-card > strong { font-size: 26px; }.compact-card__footer { border-top: 1px solid var(--line); padding-top: 13px; margin-top: 22px; font-size: 10px; color: var(--muted); }
 .source-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }.source-card { border: 1px solid var(--line); background: rgba(255,255,255,.55); border-radius: 18px; padding: 24px; display: grid; grid-template-columns: 45px 1fr; gap: 15px; }.source-card > .q-icon { background: var(--ink); color: var(--acid); padding: 10px; border-radius: 10px; font-size: 24px; }.source-card .mono { font-size: 8px; color: var(--muted); }.source-card h2 { margin: 4px 0; }.source-card p { color: var(--muted); font-size: 11px; }.source-list { grid-column: 1/-1; border-top: 1px solid var(--line); }.source-list div { display: flex; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 11px; }.source-list small { color: var(--muted); text-align: right; }
 .timeline { max-width: 780px; }.timeline article { display: grid; grid-template-columns: 48px 1fr auto; gap: 16px; align-items: start; border-bottom: 1px solid var(--line); padding: 20px 0; }.timeline__dot { width: 42px; height: 42px; border: 1px solid var(--ink); display: grid; place-items: center; border-radius: 50%; }.timeline .mono { font-size: 9px; color: var(--muted); }.timeline h3 { margin: 4px 0; }.timeline p { color: var(--muted); margin: 0; font-size: 11px; }
 .editor-card { width: min(680px, 100vw); border-radius: 22px 0 0 22px !important; display: flex; flex-direction: column; }.editor-head { background: var(--ink); color: white; display: flex; justify-content: space-between; align-items: center; padding: 24px 28px; }.editor-head .mono { color: var(--acid); font-size: 9px; }.editor-head h2 { margin: 4px 0 0; font-size: 25px; }.editor-body { flex: 1; overflow: auto; padding: 26px 28px; background: var(--paper); }.form-section { margin-bottom: 25px; }.form-section > .mono { display: block; font-size: 9px; font-weight: 500; margin-bottom: 12px; }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.span-2 { grid-column: 1/-1; }.editor-actions { border-top: 1px solid var(--line); padding: 14px 24px; background: white; }
-.auth-card { width: min(440px, 92vw); padding: 16px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.auth-card { width: min(440px, 92vw); padding: 16px; }.google-btn { background: var(--ink); color: white; }.auth-divider { text-align: center; font-size: 9px; color: var(--muted); margin: 10px 0 2px; }
+.report-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.report-tiles article { background: var(--surface, rgba(255,255,255,.66)); border: 1px solid var(--line); border-radius: 15px; padding: 18px 20px; }.report-tiles .mono { font-size: 9px; color: var(--muted); }.report-tiles strong { display: block; font-size: clamp(20px, 2.6vw, 30px); letter-spacing: -.03em; margin: 8px 0 2px; }.report-tiles small { color: var(--muted); font-size: 10px; }
+.trend-chart { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: end; border-top: 1px solid var(--ink); padding-top: 18px; }
+.trend-col { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; padding: 0; cursor: pointer; color: var(--text); }
+.trend-value { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.trend-bar { display: flex; align-items: flex-end; justify-content: center; height: 120px; width: 100%; }
+.trend-bar i { display: block; width: min(34px, 60%); background: var(--muted); border-radius: 4px 4px 0 0; min-height: 0; transition: height .25s ease; }
+.trend-col.active .trend-bar i { background: var(--acid); box-shadow: inset 0 0 0 1px var(--ink); }
+.trend-col.active .trend-label { color: var(--text); font-weight: 700; }.trend-label { font-size: 9px; color: var(--muted); }
+.cat-list { border-top: 1px solid var(--ink); }
+.cat-row { display: grid; grid-template-columns: minmax(90px, 150px) 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.cat-row b { font-size: 12px; white-space: nowrap; }
+.cat-bar { display: block; height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.cat-bar i { display: block; height: 100%; background: var(--muted); border-radius: 4px; }
+.empty-note { color: var(--muted); font-size: 12px; padding: 14px 0; }
+.account-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }.account-grid article { border: 1px solid var(--line); background: var(--surface, rgba(255,255,255,.55)); border-radius: 15px; padding: 18px 20px; }.account-grid .mono { font-size: 9px; color: var(--muted); }.account-grid strong { display: block; font-size: 22px; margin-top: 8px; }.auth-card .mono { color: var(--muted); font-size: 9px; }.auth-card h2 { margin: 7px 0; font-size: 28px; }.auth-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .reveal { animation: rise .55s both; }.reveal--2 { animation-delay: .08s; }.reveal--3 { animation-delay: .14s; }.reveal--4 { animation-delay: .2s; }@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 76px 1fr; }.rail { padding-inline: 10px; }.rail-link { grid-template-columns: 1fr; place-items: center; }.rail-link span, .rail-link b, .rail-note { display: none; }.new-bill .q-btn__content span { display: none; }.cards-grid { grid-template-columns: repeat(2,1fr); }.bill-row { grid-template-columns: 55px 1fr 130px 20px; }.bill-method { display: none; } }
-@media (max-width: 720px) { .sync-pill { display: none; }.topbar__inner { padding: 0 15px; }.workspace { display: block; }.rail { position: fixed; z-index: 20; top: auto; bottom: 0; height: 66px; width: 100%; border: 0; border-top: 1px solid var(--line); background: rgba(244,241,232,.95); backdrop-filter: blur(12px); padding: 6px 8px; }.rail nav { display: grid; grid-template-columns: repeat(4,1fr); }.rail-link { padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; font-size: 9px; }.rail-link span { display: block; }.rail-link b, .new-bill { display: none; }.rail-link.active { color: var(--ink); background: var(--acid); }.content { padding: 28px 16px 100px; }.today { display: none; }.page-heading h1 { font-size: 44px; }.hero-grid, .message-preview { grid-template-columns: 1fr; }.fund-card > strong { font-size: 45px; }.bill-row { grid-template-columns: 48px 1fr auto; gap: 10px; }.bill-value .status, .row-arrow { display: none; }.bill-title span, .bill-main small { display: none; }.message-preview { padding: 24px 18px; gap: 35px; }.phone-card { width: 100%; }.cards-grid, .source-grid { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.sub-heading { display: block; }.sub-heading .q-btn { margin-top: 20px; }.form-grid { grid-template-columns: 1fr; }.span-2 { grid-column: auto; }.editor-card { border-radius: 0 !important; }.editor-body { padding: 20px 16px; } }
+@media (max-width: 720px) { .sync-pill { display: none; }.topbar__inner { padding: 0 15px; }.workspace { display: block; }.rail { position: fixed; z-index: 20; top: auto; bottom: 0; height: 66px; width: 100%; border: 0; border-top: 1px solid var(--line); background: rgba(244,241,232,.95); backdrop-filter: blur(12px); padding: 6px 8px; }.rail nav { display: grid; grid-template-columns: repeat(5,1fr); }.rail-link { padding: 8px 4px; display: flex; flex-direction: column; gap: 2px; font-size: 9px; }.rail-link span { display: block; }.rail-link b, .new-bill { display: none; }.rail-link.active { color: var(--ink); background: var(--acid); }.content { padding: 28px 16px 100px; }.today { display: none; }.page-heading h1 { font-size: 44px; }.hero-grid, .message-preview { grid-template-columns: 1fr; }.fund-card > strong { font-size: 45px; }.bill-row { grid-template-columns: 48px 1fr auto; gap: 10px; }.bill-value .status, .row-arrow { display: none; }.bill-title span, .bill-main small { display: none; }.message-preview { padding: 24px 18px; gap: 35px; }.phone-card { width: 100%; }.cards-grid, .source-grid { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.sub-heading { display: block; }.sub-heading .q-btn { margin-top: 20px; }.form-grid { grid-template-columns: 1fr; }.span-2 { grid-column: auto; }.editor-card { border-radius: 0 !important; }.editor-body { padding: 20px 16px; } }
 </style>
 
 <style>
@@ -266,7 +424,7 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
   border-top: 1px solid var(--line);
   background: var(--canvas);
 }
-.mobile-first-app .rail nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.mobile-first-app .rail nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .mobile-first-app .rail-link {
   min-width: 0;
   min-height: 56px;
@@ -326,7 +484,11 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
 .mobile-first-app .message-preview,
 .mobile-first-app .cards-grid,
 .mobile-first-app .source-grid,
+.mobile-first-app .report-tiles,
 .mobile-first-app .filters { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.mobile-first-app .trend-value { display: none; }
+.mobile-first-app .trend-col.active .trend-value { display: block; }
+@media (min-width: 640px) { .mobile-first-app .report-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .mobile-first-app .trend-value { display: block; } }
 .mobile-first-app .fund-card,
 .mobile-first-app .action-card,
 .mobile-first-app .message-preview { min-height: auto; padding: 22px 20px; border-radius: 16px; }
@@ -357,7 +519,8 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
 .mobile-first-app .bill-title span,
 .mobile-first-app .bill-method,
 .mobile-first-app .bill-value .status,
-.mobile-first-app .row-arrow { display: none; }
+.mobile-first-app .row-arrow,
+.mobile-first-app .row-pay { display: none; }
 .mobile-first-app .bill-main small { display: block; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .mobile-first-app .bill-value strong { font-size: 14px; white-space: nowrap; }
 
@@ -445,6 +608,7 @@ onMounted(() => load().catch((error) => $q.notify({ type: 'warning', message: `S
   .mobile-first-app .bill-method,
   .mobile-first-app .bill-value .status,
   .mobile-first-app .row-arrow { display: block; }
+  .mobile-first-app .row-pay { display: inline-flex; }
   .mobile-first-app .cards-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 

@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue'
 import { LocalStorage } from 'quasar'
 import { demoBills } from '../data/demoBills'
+import { addMonthsClamped } from '../utils/dates'
 
 const storageKey = 'provisiona:bills:v1'
+const isDemoId = (id) => String(id).startsWith('demo-')
 const bills = ref(LocalStorage.getItem(storageKey) || demoBills)
 const loading = ref(false)
 const syncMode = ref('local')
@@ -46,11 +48,56 @@ export function useBills() {
     return normalized
   }
 
-  async function updateStatus(id, status) {
-    const bill = bills.value.find((item) => item.id === id)
-    if (!bill) return
-    await save({ ...bill, status })
+  async function remove(id) {
+    bills.value = bills.value.filter((item) => item.id !== id)
+    persist()
+    if (syncMode.value === 'supabase' && !isDemoId(id)) {
+      const { error } = await supabase.from('bills').delete().eq('id', id)
+      if (error) throw error
+    }
   }
+
+  function nextOccurrence(bill) {
+    return {
+      ...bill,
+      id: crypto.randomUUID(),
+      dueDate: addMonthsClamped(bill.dueDate, 1),
+      documentExpectedAt: bill.documentExpectedAt ? addMonthsClamped(bill.documentExpectedAt, 1) : '',
+      discountUntil: bill.discountUntil ? addMonthsClamped(bill.discountUntil, 1) : '',
+      amount: Number(bill.nominalAmount || bill.amount),
+      status: 'waiting_document',
+      barcode: '',
+    }
+  }
+
+  async function markPaid(id) {
+    const bill = bills.value.find((item) => item.id === id)
+    if (!bill || bill.status === 'paid') return { next: null }
+    await save({ ...bill, status: 'paid' })
+    let next = null
+    if (bill.recurring) {
+      next = nextOccurrence(bill)
+      await save(next)
+    }
+    return { next }
+  }
+
+  async function pushLocal() {
+    const { data: { user } } = await supabase.auth.getUser()
+    const rows = bills.value.filter((bill) => !isDemoId(bill.id)).map((bill) => toRow(bill, user.id))
+    if (rows.length) {
+      const { error } = await supabase.from('bills').upsert(rows)
+      if (error) throw error
+    }
+    syncMode.value = 'supabase'
+    await load()
+  }
+
+  function goLocal() {
+    syncMode.value = 'local'
+  }
+
+  const hasRealLocalBills = computed(() => bills.value.some((bill) => !isDemoId(bill.id)))
 
   function resetDemo() {
     bills.value = structuredClone(demoBills)
@@ -58,7 +105,7 @@ export function useBills() {
     persist()
   }
 
-  return { bills, sortedBills, loading, syncMode, nubankNeed, waitingDocuments, scheduled, load, save, updateStatus, resetDemo }
+  return { bills, sortedBills, loading, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal, resetDemo }
 }
 
 const toRow = (bill, userId) => ({
