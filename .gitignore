@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.quasar/
+.env
+*.local
+*.log

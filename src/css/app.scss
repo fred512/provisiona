@@ -1,0 +1,48 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+:root {
+  color-scheme: light;
+  --ink: oklch(25% 0.025 157);
+  --paper: oklch(96% 0.008 145);
+  --acid: oklch(93% 0.205 119);
+  --peach: oklch(80% 0.105 63);
+  --canvas: oklch(97.5% 0.006 145);
+  --surface: oklch(100% 0 0);
+  --surface-raised: oklch(94.5% 0.012 145);
+  --text: oklch(25% 0.025 157);
+  --muted: oklch(47% 0.018 157);
+  --line: oklch(84% 0.012 157);
+  --interaction: oklch(94% 0.014 145);
+  --deep-text: oklch(98% 0.006 145);
+}
+
+body.body--dark {
+  color-scheme: dark;
+  --ink: oklch(17% 0.024 157);
+  --paper: oklch(19% 0.022 157);
+  --acid: oklch(88% 0.17 119);
+  --peach: oklch(67% 0.105 58);
+  --canvas: oklch(13.5% 0.018 157);
+  --surface: oklch(18% 0.021 157);
+  --surface-raised: oklch(23% 0.024 157);
+  --text: oklch(93% 0.009 145);
+  --muted: oklch(74% 0.014 157);
+  --line: oklch(31% 0.022 157);
+  --interaction: oklch(22% 0.024 157);
+  --deep-text: oklch(96% 0.008 145);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--canvas);
+  font-family: 'Manrope', sans-serif;
+}
+.mono { font-family: 'DM Mono', monospace; }
+.q-field--outlined .q-field__control { border-radius: 12px; }
+.q-dialog__inner > div { border-radius: 22px; }
+body,
+.q-layout,
+.q-card,
+.q-field__control { transition: background-color 180ms ease-out, color 180ms ease-out, border-color 180ms ease-out; }
