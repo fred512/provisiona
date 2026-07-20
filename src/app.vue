@@ -97,9 +97,22 @@
           </template>
 
           <template v-else-if="activeView === 'bills'">
-            <header class="sub-heading"><div><span class="eyebrow mono">CONTAS A PAGAR</span><h1>Todos os compromissos</h1></div><q-btn unelevated icon="add" label="Nova despesa" @click="openEditor()" /></header>
-            <div class="filters"><q-input v-model="search" outlined dense clearable placeholder="Buscar despesa ou remetente"><template #prepend><q-icon name="search" /></template></q-input><q-select v-model="statusFilter" outlined dense :options="statusOptions" emit-value map-options /></div>
-            <div class="cards-grid"><article v-for="bill in filteredBills" :key="bill.id" class="compact-card" @click="openEditor(bill)"><div class="compact-card__top"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span><span class="mono">{{ formatDate(bill.dueDate) }}</span><q-btn v-if="bill.status !== 'paid'" dense round flat size="sm" icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn></div><h3>{{ bill.title }}</h3><strong>{{ money(bill.amount) }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }}</span><span>{{ bill.bankAccount }}</span></div></article></div>
+            <header class="sub-heading">
+              <div><span class="eyebrow mono">CONTAS A PAGAR</span><h1>Todos os compromissos</h1></div>
+              <q-btn v-if="billsTab === 'bills'" unelevated icon="add" label="Nova despesa" @click="openEditor()" />
+              <q-btn v-else unelevated icon="add" label="Novo modelo" @click="openTemplateEditor()" />
+            </header>
+            <q-btn-toggle v-model="billsTab" class="bills-tab-toggle" unelevated toggle-color="dark" :options="[{ label: 'Ocorrências', value: 'bills' }, { label: 'Modelos', value: 'templates' }]" />
+            <template v-if="billsTab === 'bills'">
+              <div class="filters"><q-input v-model="search" outlined dense clearable placeholder="Buscar despesa ou remetente"><template #prepend><q-icon name="search" /></template></q-input><q-select v-model="statusFilter" outlined dense :options="statusOptions" emit-value map-options /></div>
+              <div class="cards-grid"><article v-for="bill in filteredBills" :key="bill.id" class="compact-card" @click="openEditor(bill)"><div class="compact-card__top"><span :class="['status', `status--${bill.status}`]">{{ statusLabel(bill.status) }}</span><span class="mono">{{ formatDate(bill.dueDate) }}</span><q-btn v-if="bill.status !== 'paid'" dense round flat size="sm" icon="task_alt" aria-label="Marcar como paga" @click.stop="payBill(bill)"><q-tooltip>Marcar como paga</q-tooltip></q-btn></div><h3>{{ bill.title }}</h3><strong>{{ money(bill.amount) }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(bill.sourceChannel)" /> {{ bill.sourceChannel }}</span><span>{{ bill.bankAccount }}</span></div></article></div>
+            </template>
+            <template v-else>
+              <p class="templates-hint">Modelos geram as despesas do período automaticamente — cadastre uma vez e não precisa mais digitar boleto todo mês.</p>
+              <div class="cards-grid"><article v-for="tpl in templates" :key="tpl.id" class="compact-card" :class="{ 'compact-card--inactive': !tpl.active }" @click="openTemplateEditor(tpl)"><div class="compact-card__top"><span class="status">{{ frequencyLabel(tpl.frequency) }}</span><span class="mono">DIA {{ tpl.dueDay }}</span></div><h3>{{ tpl.title }}</h3><strong>{{ tpl.nominalAmount ? money(tpl.nominalAmount) : 'valor variável' }}</strong><div class="compact-card__footer"><span><q-icon :name="sourceIcon(tpl.sourceChannel)" /> {{ tpl.sourceChannel }}</span><span>{{ tpl.bankAccount }}</span></div></article>
+                <p v-if="!templates.length" class="empty-note">Nenhum modelo cadastrado. Crie um para a luz, telefone, cartão ou clube — o app gera as despesas do período sozinho.</p>
+              </div>
+            </template>
           </template>
 
           <template v-else-if="activeView === 'report'">
@@ -149,11 +162,38 @@
       <q-card class="editor-card">
         <q-card-section class="editor-head"><div><span class="mono">{{ draft.id ? 'EDITAR COMPROMISSO' : 'NOVO COMPROMISSO' }}</span><h2>{{ draft.id ? draft.title : 'Cadastrar despesa' }}</h2></div><q-btn round flat icon="close" v-close-popup /></q-card-section>
         <q-card-section class="editor-body q-gutter-y-md">
-          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" /><q-input v-model.number="draft.amount" outlined type="number" step="0.01" prefix="R$" label="Valor para pagamento" lazy-rules :rules="[v => (v !== null && v !== '' && Number(v) >= 0) || 'Informe um valor válido']" /><q-input v-model.number="draft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor nominal" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label lazy-rules :rules="[v => !!v || 'Informe o vencimento']" /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
+          <div class="form-section"><span class="mono">01 · COBRANÇA</span><div class="form-grid"><q-input v-model="draft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" /><q-input v-model.number="draft.amount" outlined type="number" step="0.01" prefix="R$" label="Valor para pagamento" hint="Deixe em branco se ainda não sabe" lazy-rules :rules="[v => (v === null || v === '' || Number(v) >= 0) || 'Valor não pode ser negativo']" /><q-input v-model.number="draft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor nominal" /><q-input v-model="draft.dueDate" outlined type="date" label="Vencimento" stack-label lazy-rules :rules="[v => !!v || 'Informe o vencimento']" /><q-input v-model="draft.discountUntil" outlined type="date" label="Desconto até" stack-label /><q-input v-model="draft.payerName" outlined label="Pagador no boleto" /><q-select v-model="draft.category" outlined label="Categoria" :options="categories" /></div></div>
           <div class="form-section"><span class="mono">02 · ONDE LOCALIZAR</span><div class="form-grid"><q-select v-model="draft.sourceChannel" outlined label="Fonte" :options="sourceOptions" /><q-input v-model="draft.sender" outlined label="Remetente esperado" /><q-input v-model="draft.locatorHint" outlined label="Assunto, contato ou regra de busca" class="span-2" /></div></div>
           <div class="form-section"><span class="mono">03 · EXECUÇÃO</span><div class="form-grid"><q-select v-model="draft.paymentMethod" outlined label="Forma de pagamento" :options="paymentOptions" /><q-select v-model="draft.bankAccount" outlined label="Conta pagadora" :options="['Nubank', 'CAIXA']" /><q-select v-model="draft.status" outlined label="Situação" :options="statusOptions" emit-value map-options /><q-input v-model="draft.documentExpectedAt" outlined type="date" label="Documento esperado" stack-label /><q-input v-model="draft.barcode" outlined autogrow label="Linha digitável" class="span-2"><template #append><q-btn v-if="draft.barcode" flat round icon="content_copy" @click="copy(draft.barcode)" /></template></q-input></div></div>
         </q-card-section>
         <q-card-actions class="editor-actions"><q-btn v-if="draft.id" flat color="negative" icon="delete_outline" label="Excluir" @click="confirmRemove" /><q-btn flat label="Cancelar" v-close-popup /><q-space /><q-btn unelevated color="dark" label="Salvar compromisso" icon-right="arrow_forward" @click="saveDraft" /></q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="templateOpen" :position="$q.screen.gt.sm ? 'right' : 'bottom'" :full-height="$q.screen.gt.sm">
+      <q-card class="editor-card">
+        <q-card-section class="editor-head"><div><span class="mono">{{ tplDraft.id ? 'EDITAR MODELO' : 'NOVO MODELO' }}</span><h2>{{ tplDraft.id ? tplDraft.title : 'Cadastrar recorrência' }}</h2></div><q-btn round flat icon="close" v-close-popup /></q-card-section>
+        <q-card-section class="editor-body q-gutter-y-md">
+          <div class="form-section"><span class="mono">01 · RECORRÊNCIA</span><div class="form-grid">
+            <q-input v-model="tplDraft.title" outlined label="Nome da despesa" class="span-2" lazy-rules :rules="[v => (!!v && v.trim().length >= 2 && v.trim().length <= 120) || 'Entre 2 e 120 caracteres']" />
+            <q-select v-model="tplDraft.frequency" outlined label="Frequência" :options="frequencyOptions" emit-value map-options />
+            <q-input v-model.number="tplDraft.dueDay" outlined type="number" min="1" max="31" label="Dia do vencimento" />
+            <q-input v-model="tplDraft.anchorMonth" outlined type="month" label="Mês de referência" stack-label hint="Um mês em que a despesa é devida" />
+            <q-input v-model.number="tplDraft.nominalAmount" outlined type="number" step="0.01" prefix="R$" label="Valor habitual (opcional)" hint="Deixe em branco se o valor varia" />
+            <q-select v-model="tplDraft.category" outlined label="Categoria" :options="categories" />
+          </div></div>
+          <div class="form-section"><span class="mono">02 · ONDE LOCALIZAR</span><div class="form-grid">
+            <q-select v-model="tplDraft.sourceChannel" outlined label="Fonte" :options="sourceOptions" />
+            <q-input v-model="tplDraft.sender" outlined label="Remetente esperado" />
+            <q-input v-model="tplDraft.locatorHint" outlined label="Assunto, contato ou regra de busca" class="span-2" />
+          </div></div>
+          <div class="form-section"><span class="mono">03 · EXECUÇÃO</span><div class="form-grid">
+            <q-select v-model="tplDraft.paymentMethod" outlined label="Forma de pagamento" :options="paymentOptions" />
+            <q-select v-model="tplDraft.bankAccount" outlined label="Conta pagadora" :options="['Nubank', 'CAIXA']" />
+            <q-toggle v-model="tplDraft.active" label="Modelo ativo (gera despesas)" class="span-2" />
+          </div></div>
+        </q-card-section>
+        <q-card-actions class="editor-actions"><q-btn v-if="tplDraft.id" flat color="negative" icon="delete_outline" label="Excluir" @click="confirmRemoveTemplate" /><q-btn flat label="Cancelar" v-close-popup /><q-space /><q-btn unelevated color="dark" label="Salvar modelo" icon-right="arrow_forward" @click="saveTplDraft" /></q-card-actions>
       </q-card>
     </q-dialog>
 
@@ -178,10 +218,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { copyToClipboard, useQuasar } from 'quasar'
 import { useBills } from './composables/useBills'
 import { useAuth } from './composables/useAuth'
+import { FREQUENCY_LABELS, useTemplates } from './composables/useTemplates'
+import { parseBoleto } from './utils/boleto'
 
 const $q = useQuasar()
 const { $supabase: supabase, $isSupabaseConfigured: isSupabaseConfigured } = useNuxtApp()
@@ -189,7 +231,8 @@ const storedTheme = window.localStorage.getItem('provisiona:theme')
 const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 const themeMode = ref(storedTheme || systemTheme)
 $q.dark.set(themeMode.value === 'dark')
-const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal } = useBills()
+const { sortedBills, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, materialize, pushLocal, goLocal } = useBills()
+const { templates, activeTemplates, loadTemplates, saveTemplate, removeTemplate, pushLocalTemplates, goLocalTemplates } = useTemplates()
 const { user, init: initAuth, signInWithGoogle, signInWithEmail, signOut } = useAuth()
 const avatarUrl = computed(() => user.value?.user_metadata?.avatar_url || user.value?.user_metadata?.picture || '')
 const activeView = ref('dashboard')
@@ -199,8 +242,15 @@ const authEmail = ref('')
 const authBusy = ref(false)
 const search = ref('')
 const statusFilter = ref('all')
-const blankBill = () => ({ title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true })
+const blankBill = () => ({ title: '', category: 'Moradia', amount: null, nominalAmount: null, dueDate: '', documentExpectedAt: '', discountUntil: '', payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', status: 'waiting_document', barcode: '', recurring: true, templateId: null, period: null })
 const draft = reactive(blankBill())
+const billsTab = ref('bills')
+const templateOpen = ref(false)
+const currentMonthValue = () => new Date().toISOString().slice(0, 7)
+const blankTemplate = () => ({ title: '', category: 'Moradia', frequency: 'monthly', dueDay: 10, anchorMonth: currentMonthValue(), nominalAmount: null, payerName: '', sourceChannel: 'Gmail', sender: '', locatorHint: '', paymentMethod: 'Boleto', bankAccount: 'Nubank', active: true })
+const tplDraft = reactive(blankTemplate())
+const frequencyOptions = Object.entries(FREQUENCY_LABELS).map(([value, label]) => ({ value, label }))
+const frequencyLabel = (value) => FREQUENCY_LABELS[value] || value
 const categories = ['Moradia', 'Educação', 'Saúde', 'Comunicação', 'Assinaturas', 'Impostos', 'Outros']
 const sourceOptions = ['Gmail', 'WhatsApp', 'DDA Nubank', 'Portal', 'Aplicativo', 'Outro']
 const paymentOptions = ['Boleto', 'Débito automático', 'Pix']
@@ -262,7 +312,7 @@ function openEditor(bill) { Object.assign(draft, blankBill(), bill ? { ...bill }
 async function saveDraft() {
   const title = (draft.title || '').trim()
   if (title.length < 2 || title.length > 120) return $q.notify({ type: 'warning', message: 'Nome deve ter entre 2 e 120 caracteres.' })
-  if (draft.amount === null || draft.amount === '' || Number(draft.amount) < 0) return $q.notify({ type: 'warning', message: 'Informe um valor válido.' })
+  if (draft.amount !== null && draft.amount !== '' && Number(draft.amount) < 0) return $q.notify({ type: 'warning', message: 'Valor não pode ser negativo.' })
   if (!draft.dueDate) return $q.notify({ type: 'warning', message: 'Informe o vencimento.' })
   try { await save({ ...draft, title }); editorOpen.value = false; $q.notify({ color: 'dark', textColor: 'white', icon: 'done', message: 'Compromisso salvo.' }) }
   catch (error) { $q.notify({ type: 'negative', message: error.message }) }
@@ -282,10 +332,52 @@ function confirmRemove() {
 
 async function payBill(bill) {
   try {
-    const { next } = await markPaid(bill.id)
-    $q.notify({ color: 'dark', textColor: 'white', icon: 'task_alt', message: next ? `Paga! Próxima gerada para ${formatDate(next.dueDate)}.` : 'Marcada como paga.' })
+    await markPaid(bill.id)
+    $q.notify({ color: 'dark', textColor: 'white', icon: 'task_alt', message: 'Marcada como paga.' })
   } catch (error) { $q.notify({ type: 'negative', message: error.message }) }
 }
+
+function openTemplateEditor(tpl) {
+  Object.assign(tplDraft, blankTemplate(), tpl ? { ...tpl } : {})
+  templateOpen.value = true
+}
+
+async function saveTplDraft() {
+  const title = (tplDraft.title || '').trim()
+  if (title.length < 2 || title.length > 120) return $q.notify({ type: 'warning', message: 'Nome deve ter entre 2 e 120 caracteres.' })
+  const day = Number(tplDraft.dueDay)
+  if (!Number.isInteger(day) || day < 1 || day > 31) return $q.notify({ type: 'warning', message: 'Dia do vencimento deve ser entre 1 e 31.' })
+  if (!/^\d{4}-\d{2}$/.test(tplDraft.anchorMonth || '')) return $q.notify({ type: 'warning', message: 'Informe o mês de referência.' })
+  try {
+    await saveTemplate({ ...tplDraft, title, dueDay: day })
+    templateOpen.value = false
+    $q.notify({ color: 'dark', textColor: 'white', icon: 'done', message: 'Modelo salvo.' })
+    await runMaterialize()
+  } catch (error) { $q.notify({ type: 'negative', message: error.message }) }
+}
+
+function confirmRemoveTemplate() {
+  $q.dialog({
+    title: 'Excluir modelo?',
+    message: `"${tplDraft.title}" deixa de gerar novas despesas. As já geradas permanecem.`,
+    ok: { label: 'Excluir', color: 'negative', unelevated: true },
+    cancel: { label: 'Manter', flat: true },
+  }).onOk(async () => {
+    try { await removeTemplate(tplDraft.id); templateOpen.value = false; $q.notify({ color: 'dark', icon: 'delete', message: 'Modelo excluído.' }) }
+    catch (error) { $q.notify({ type: 'negative', message: error.message }) }
+  })
+}
+
+watch(() => draft.barcode, (value, old) => {
+  if (!value || value === old || !editorOpen.value) return
+  const parsed = parseBoleto(value)
+  if (!parsed) return
+  let filled = []
+  if (parsed.amount !== null) { draft.amount = parsed.amount; filled.push('valor') }
+  if (parsed.dueDate) { draft.dueDate = parsed.dueDate; filled.push('vencimento') }
+  if (filled.length && draft.status === 'waiting_document') draft.status = 'document_found'
+  if (filled.length) $q.notify({ color: 'dark', textColor: 'white', icon: 'qr_code_scanner', message: `Boleto lido: ${filled.join(' e ')} preenchido${filled.length > 1 ? 's' : ''}.` })
+})
 function copy(value) { copyToClipboard(value).then(() => $q.notify({ color: 'dark', message: 'Código copiado.', icon: 'content_copy' })) }
 function copyDemoBarcode() { if (uvvBill.value?.barcode) copy(uvvBill.value.barcode) }
 function handleSync() {
@@ -322,11 +414,33 @@ async function logout() {
   try {
     await signOut()
     goLocal()
+    goLocalTemplates()
     authOpen.value = false
     $q.notify({ color: 'dark', icon: 'logout', message: 'Sessão encerrada. Modo local ativo.' })
   } catch (error) {
     $q.notify({ type: 'negative', message: error.message })
   }
+}
+
+async function runMaterialize() {
+  try {
+    const created = await materialize(activeTemplates.value)
+    if (created.length) $q.notify({ color: 'dark', textColor: 'white', icon: 'event_repeat', message: `${created.length} despesa${created.length > 1 ? 's' : ''} do período gerada${created.length > 1 ? 's' : ''} dos modelos.` })
+  } catch (error) {
+    $q.notify({ type: 'warning', message: `Recorrências: ${error.message}` })
+  }
+}
+
+async function syncAll() {
+  await load()
+  await loadTemplates()
+  await runMaterialize()
+}
+
+async function importAll() {
+  await pushLocal()
+  await pushLocalTemplates()
+  await runMaterialize()
 }
 
 async function handleSession() {
@@ -340,20 +454,23 @@ async function handleSession() {
       cancel: { label: 'Começar do zero', flat: true },
       persistent: true,
     })
-      .onOk(() => pushLocal().catch((e) => $q.notify({ type: 'negative', message: e.message })))
-      .onCancel(() => load().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+      .onOk(() => importAll().catch((e) => $q.notify({ type: 'negative', message: e.message })))
+      .onCancel(() => syncAll().catch((e) => $q.notify({ type: 'negative', message: e.message })))
   } else {
-    await load().catch((e) => $q.notify({ type: 'negative', message: e.message }))
+    await syncAll().catch((e) => $q.notify({ type: 'negative', message: e.message }))
   }
   authOpen.value = false
 }
-const money = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0)
+const money = (value) => value === null || value === '' ? 'a definir' : new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0)
 const formatDate = (value) => value ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)) : '—'
 const day = (value) => value.slice(8, 10)
 const month = (value) => new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`)).replace('.', '').toUpperCase()
 const statusLabel = (status) => ({ waiting_document: 'Aguardando', document_found: 'Localizado', scheduled: 'Agendado', paid: 'Pago' }[status] || status)
 const sourceIcon = (source) => ({ Gmail: 'mail', WhatsApp: 'chat', 'DDA Nubank': 'account_balance', Portal: 'language', Aplicativo: 'apps' }[source] || 'folder')
-onMounted(() => initAuth(handleSession))
+onMounted(() => {
+  initAuth(handleSession)
+  if (!user.value) runMaterialize()
+})
 </script>
 
 <style scoped>
@@ -375,6 +492,9 @@ onMounted(() => initAuth(handleSession))
 .action-card { background: var(--peach); position: relative; overflow: hidden; }.action-card::after { content: ''; position: absolute; width: 130px; height: 130px; border: 1px solid rgba(23,37,31,.3); border-radius: 50%; right: -45px; top: -45px; box-shadow: 0 0 0 25px rgba(23,37,31,.04), 0 0 0 50px rgba(23,37,31,.03); }.action-card > span { font: 10px 'DM Mono'; }.action-card > .q-icon { position: absolute; right: 25px; top: 26px; font-size: 30px; }.action-card h2 { font-size: 24px; line-height: 1.15; margin: 45px 0 10px; max-width: 320px; }.action-card p { font-size: 11px; line-height: 1.5; max-width: 300px; }.action-card button { border: 0; border-bottom: 1px solid; background: transparent; padding: 5px 0; font-weight: 800; cursor: pointer; }
 .section-block { margin-top: 44px; }.section-title { display: flex; justify-content: space-between; align-items: end; margin-bottom: 15px; }.section-title span { font-size: 9px; color: var(--muted); }.section-title h2 { margin: 4px 0 0; font-size: 25px; }.bill-list { border-top: 1px solid var(--ink); }.bill-row { display: grid; grid-template-columns: 58px minmax(220px,1fr) 130px 145px 20px; align-items: center; gap: 18px; border-bottom: 1px solid var(--line); padding: 15px 4px; cursor: pointer; transition: .2s ease; }.bill-row:hover { background: rgba(255,255,255,.55); padding-left: 10px; }.date-tile { background: white; border: 1px solid var(--line); padding: 7px; text-align: center; }.date-tile b { font-size: 19px; display: block; line-height: 1; }.date-tile span { font: 9px 'DM Mono'; }.bill-title { display: flex; gap: 10px; align-items: baseline; }.bill-title strong { font-size: 15px; }.bill-title span { color: var(--muted); font-size: 10px; }.bill-main small { color: var(--muted); font-size: 10px; }.bill-method span, .bill-method small { display: block; font-size: 11px; }.bill-method small { color: var(--muted); }.bill-value { text-align: right; }.bill-value strong { display: block; font-size: 15px; }.status { display: inline-flex; margin-top: 5px; font: 8px 'DM Mono'; text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px; background: #e5e2d9; border-radius: 4px; }.status--document_found { background: #dff0c5; }.status--scheduled { background: #d7e9f2; }.status--paid { background: var(--acid); }.status--waiting_document { background: #f4d3bd; }.row-arrow { color: var(--muted); }.row-pay { color: var(--muted); }.row-pay:hover { color: var(--ink); }
 .message-preview { margin-top: 55px; background: #dbe4dd; padding: 35px; border-radius: 22px; display: grid; grid-template-columns: .9fr 1fr; gap: 55px; align-items: center; }.phone-card { background: #efece4; border: 7px solid var(--ink); border-radius: 25px; padding: 18px; max-width: 350px; box-shadow: 11px 12px 0 rgba(23,37,31,.16); transform: rotate(-1deg); }.phone-card__head { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 12px; }.phone-card__head > .q-icon { background: #25d366; border-radius: 50%; color: white; padding: 7px; }.phone-card__head strong, .phone-card__head span { display: block; font-size: 11px; }.phone-card__head span { color: var(--muted); font-size: 8px; }.chat-bubble { margin: 18px 0 4px 20px; background: #d8fdd2; padding: 14px; border-radius: 10px 2px 10px 10px; font-size: 11px; line-height: 1.45; }.chat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 12px; }.chat-actions button { border: 1px solid #7baf77; background: transparent; border-radius: 5px; font-size: 9px; padding: 7px; cursor: pointer; }.message-copy > span { font-size: 9px; }.message-copy h2 { font-family: Georgia, serif; font-size: 40px; line-height: 1; margin: 10px 0 15px; font-weight: 400; }.message-copy p { font-size: 12px; line-height: 1.7; max-width: 480px; }.message-stats { display: flex; gap: 25px; margin-top: 25px; }.message-stats div { border-left: 1px solid; padding-left: 10px; }.message-stats b, .message-stats span { display: block; }.message-stats b { font: 14px 'DM Mono'; }.message-stats span { font-size: 9px; color: var(--muted); }
+.bills-tab-toggle { margin-bottom: 18px; }
+.templates-hint { color: var(--muted); font-size: 12px; max-width: 520px; margin-bottom: 18px; }
+.compact-card--inactive { opacity: .55; }
 .sub-heading { align-items: end; }.sub-heading h1 { font-size: clamp(34px, 4vw, 54px); }.sub-heading .q-btn { background: var(--acid); color: var(--ink); font-weight: 800; }.filters { display: grid; grid-template-columns: minmax(240px,1fr) 240px; gap: 12px; margin-bottom: 24px; }.cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }.compact-card { background: rgba(255,255,255,.66); border: 1px solid var(--line); padding: 20px; border-radius: 15px; cursor: pointer; min-height: 190px; transition: .2s ease; }.compact-card:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(23,37,31,.09); }.compact-card__top, .compact-card__footer { display: flex; justify-content: space-between; align-items: center; }.compact-card__top .mono { font-size: 9px; }.compact-card h3 { margin: 26px 0 3px; font-size: 17px; }.compact-card > strong { font-size: 26px; }.compact-card__footer { border-top: 1px solid var(--line); padding-top: 13px; margin-top: 22px; font-size: 10px; color: var(--muted); }
 .source-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }.source-card { border: 1px solid var(--line); background: rgba(255,255,255,.55); border-radius: 18px; padding: 24px; display: grid; grid-template-columns: 45px 1fr; gap: 15px; }.source-card > .q-icon { background: var(--ink); color: var(--acid); padding: 10px; border-radius: 10px; font-size: 24px; }.source-card .mono { font-size: 8px; color: var(--muted); }.source-card h2 { margin: 4px 0; }.source-card p { color: var(--muted); font-size: 11px; }.source-list { grid-column: 1/-1; border-top: 1px solid var(--line); }.source-list div { display: flex; justify-content: space-between; gap: 15px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 11px; }.source-list small { color: var(--muted); text-align: right; }
 .timeline { max-width: 780px; }.timeline article { display: grid; grid-template-columns: 48px 1fr auto; gap: 16px; align-items: start; border-bottom: 1px solid var(--line); padding: 20px 0; }.timeline__dot { width: 42px; height: 42px; border: 1px solid var(--ink); display: grid; place-items: center; border-radius: 50%; }.timeline .mono { font-size: 9px; color: var(--muted); }.timeline h3 { margin: 4px 0; }.timeline p { color: var(--muted); margin: 0; font-size: 11px; }

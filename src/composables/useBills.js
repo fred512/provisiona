@@ -1,7 +1,8 @@
 import { computed, ref } from 'vue'
 import { LocalStorage } from 'quasar'
 import { demoBills } from '../data/demoBills'
-import { addMonthsClamped } from '../utils/dates'
+import { dueDateForPeriod } from '../utils/dates'
+import { FREQUENCY_STEPS } from './useTemplates'
 
 const storageKey = 'provisiona:bills:v1'
 const isDemoId = (id) => String(id).startsWith('demo-')
@@ -57,29 +58,51 @@ export function useBills() {
     }
   }
 
-  function nextOccurrence(bill) {
-    return {
-      ...bill,
-      id: crypto.randomUUID(),
-      dueDate: addMonthsClamped(bill.dueDate, 1),
-      documentExpectedAt: bill.documentExpectedAt ? addMonthsClamped(bill.documentExpectedAt, 1) : '',
-      discountUntil: bill.discountUntil ? addMonthsClamped(bill.discountUntil, 1) : '',
-      amount: Number(bill.nominalAmount || bill.amount),
-      status: 'waiting_document',
-      barcode: '',
-    }
-  }
-
   async function markPaid(id) {
     const bill = bills.value.find((item) => item.id === id)
-    if (!bill || bill.status === 'paid') return { next: null }
+    if (!bill || bill.status === 'paid') return
     await save({ ...bill, status: 'paid' })
-    let next = null
-    if (bill.recurring) {
-      next = nextOccurrence(bill)
-      await save(next)
+  }
+
+  const occurrenceFromTemplate = (tpl, period) => ({
+    id: crypto.randomUUID(), templateId: tpl.id, period,
+    title: tpl.title, category: tpl.category,
+    amount: tpl.nominalAmount ?? null, nominalAmount: tpl.nominalAmount ?? null,
+    dueDate: dueDateForPeriod(period, tpl.dueDay),
+    documentExpectedAt: '', discountUntil: '',
+    payerName: tpl.payerName, sourceChannel: tpl.sourceChannel, sender: tpl.sender,
+    locatorHint: tpl.locatorHint, paymentMethod: tpl.paymentMethod, bankAccount: tpl.bankAccount,
+    status: 'waiting_document', barcode: '', recurring: true,
+  })
+
+  const periodOfIdx = (idx) => `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`
+
+  async function materialize(activeTemplates, today = new Date()) {
+    const nowIdx = today.getFullYear() * 12 + today.getMonth()
+    const created = []
+    for (const tpl of activeTemplates) {
+      const step = FREQUENCY_STEPS[tpl.frequency] || 1
+      const [ay, am] = tpl.anchorMonth.split('-').map(Number)
+      const anchorIdx = ay * 12 + (am - 1)
+      const targets = []
+      if (anchorIdx >= nowIdx) {
+        if (anchorIdx <= nowIdx + 1) targets.push(anchorIdx)
+      } else {
+        const diff = nowIdx - anchorIdx
+        const currentIdx = anchorIdx + Math.floor(diff / step) * step
+        if (currentIdx === nowIdx) targets.push(currentIdx)
+        const currentDue = dueDateForPeriod(periodOfIdx(currentIdx), tpl.dueDay)
+        if (new Date(`${currentDue}T23:59:59`) < today) targets.push(currentIdx + step)
+      }
+      for (const idx of targets) {
+        const period = periodOfIdx(idx)
+        if (bills.value.some((b) => b.templateId === tpl.id && b.period === period)) continue
+        const bill = occurrenceFromTemplate(tpl, period)
+        await save(bill)
+        created.push(bill)
+      }
     }
-    return { next }
+    return created
   }
 
   async function pushLocal() {
@@ -105,12 +128,15 @@ export function useBills() {
     persist()
   }
 
-  return { bills, sortedBills, loading, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, pushLocal, goLocal, resetDemo }
+  return { bills, sortedBills, loading, syncMode, nubankNeed, waitingDocuments, scheduled, hasRealLocalBills, load, save, remove, markPaid, materialize, pushLocal, goLocal, resetDemo }
 }
 
 const toRow = (bill, userId) => ({
   id: bill.id, user_id: userId, title: bill.title, category: bill.category,
-  amount: bill.amount, nominal_amount: bill.nominalAmount, due_date: bill.dueDate,
+  template_id: bill.templateId || null, period: bill.period || null,
+  amount: bill.amount === null || bill.amount === '' ? null : bill.amount,
+  nominal_amount: bill.nominalAmount === null || bill.nominalAmount === '' ? null : bill.nominalAmount,
+  due_date: bill.dueDate,
   document_expected_at: bill.documentExpectedAt || null, discount_until: bill.discountUntil || null,
   payer_name: bill.payerName, source_channel: bill.sourceChannel, sender: bill.sender,
   locator_hint: bill.locatorHint, payment_method: bill.paymentMethod, bank_account: bill.bankAccount,
@@ -118,8 +144,11 @@ const toRow = (bill, userId) => ({
 })
 
 const fromRow = (row) => ({
-  id: row.id, title: row.title, category: row.category, amount: Number(row.amount),
-  nominalAmount: Number(row.nominal_amount || row.amount), dueDate: row.due_date,
+  id: row.id, title: row.title, category: row.category,
+  templateId: row.template_id || null, period: row.period || null,
+  amount: row.amount === null ? null : Number(row.amount),
+  nominalAmount: row.nominal_amount === null ? (row.amount === null ? null : Number(row.amount)) : Number(row.nominal_amount),
+  dueDate: row.due_date,
   documentExpectedAt: row.document_expected_at, discountUntil: row.discount_until,
   payerName: row.payer_name, sourceChannel: row.source_channel, sender: row.sender,
   locatorHint: row.locator_hint, paymentMethod: row.payment_method, bankAccount: row.bank_account,
