@@ -196,12 +196,16 @@ async function syncUser(supabase: any, userId: string, clientId: string, clientS
 
   let updated = 0
   const details: string[] = []
-  const budget = { pdfs: 4, more: false }
+  const budget = { pdfs: 6, more: false }
 
   const senderCount: Record<string, number> = {}
   for (const tpl of templates || []) if (tpl.sender) senderCount[tpl.sender] = (senderCount[tpl.sender] || 0) + 1
 
-  for (const tpl of templates || []) {
+  // Processa primeiro os modelos com assunto distintivo (busca estreita, barata):
+  // evita que buscas amplas (extratos, faturas) gastem o orçamento antes deles.
+  const ordered = [...(templates || [])].sort((a, b) => (subjectTerm(b.locator_hint) ? 1 : 0) - (subjectTerm(a.locator_hint) ? 1 : 0))
+
+  for (const tpl of ordered) {
     if (!tpl.sender) continue
     if (budget.pdfs <= 0) { budget.more = true; break }
     // Busca por remetente + assunto distintivo (quando informado no modelo),

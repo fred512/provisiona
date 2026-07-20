@@ -10,3 +10,4 @@ dist/
 .vercel
 .playwright-mcp/
 supabase/.temp/
+graphify-out/
